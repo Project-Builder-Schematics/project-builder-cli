@@ -18,3 +18,29 @@ jobs:
 
       - name: just build
         run: just build
+
+      - name: smoke (layout invariants)
+        run: |
+          set -euo pipefail
+          dirs=(
+            cmd/builder
+            internal/features
+            internal/shared/services
+            internal/shared/discoverer
+            internal/shared/inputs
+            internal/shared/engine
+            internal/shared/render
+            internal/shared/events
+            internal/shared/errors
+            internal/shared/config
+            internal/shared/log
+          )
+          for d in "${dirs[@]}"; do
+            test -f "${d}/.gitkeep" || { echo "missing ${d}/.gitkeep"; exit 1; }
+          done
+          go_files=$(find cmd internal -name '*.go' 2>/dev/null | wc -l)
+          if [ "${go_files}" -ne 0 ]; then
+            echo "expected 0 *.go files under cmd/ or internal/, found ${go_files}"
+            exit 1
+          fi
+          echo "layout smoke: 11 placeholder dirs present, 0 *.go files"
