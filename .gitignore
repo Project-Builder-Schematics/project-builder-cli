@@ -31,6 +31,9 @@ go.work.sum
 bin/
 dist/
 
+# graphify knowledge-graph artifacts (rebuilt by post-commit hook)
+graphify-out/
+
 # Editor/IDE
 # .idea/
 # .vscode/
