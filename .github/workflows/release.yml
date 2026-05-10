@@ -1,0 +1,16 @@
+# DEFERRED — see issue #8 for the multi-platform binary release implementation.
+# This workflow is intentionally inert: workflow_dispatch only, single no-op job.
+# The file claims the canonical path so future work does not bikeshed where the
+# release lives.
+
+name: Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: deferred notice
+        run: echo "release.yml is deferred — see https://github.com/Project-Builder-Schematics/project-builder-cli/issues/8"

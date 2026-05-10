@@ -1,0 +1,5 @@
+{
+  "project": "project-builder-cli",
+  "rationale": "Local folder is named project-builder-cli-bootstrap but origin remote is Project-Builder-Schematics/project-builder-cli. All SDD planning artefacts in engram live under the canonical project name 'project-builder-cli'. This file overrides the cwd-basename default per the orchestrator project-resolution rules.",
+  "captured_at": "2026-05-10"
+}

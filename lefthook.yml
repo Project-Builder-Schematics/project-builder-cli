@@ -1,0 +1,21 @@
+min_version: 2.1.6
+
+pre-commit:
+  parallel: false
+  commands:
+    gofumpt:
+      glob: "*.go"
+      run: gofumpt -w {staged_files}
+      stage_fixed: true
+    goimports:
+      glob: "*.go"
+      run: goimports -w {staged_files}
+      stage_fixed: true
+    golangci-lint:
+      glob: "*.go"
+      run: golangci-lint run --new-from-rev=HEAD {staged_files}
+
+commit-msg:
+  commands:
+    conventional:
+      run: commitlint --edit {1}

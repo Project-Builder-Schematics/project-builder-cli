@@ -27,6 +27,18 @@ go.work.sum
 # env file
 .env
 
+# Build outputs
+bin/
+dist/
+
+# graphify knowledge-graph artifacts (rebuilt by post-commit hook)
+graphify-out/
+
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# macOS metadata
+.DS_Store
+
+.claude/settings.local.json

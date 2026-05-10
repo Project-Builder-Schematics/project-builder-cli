@@ -1,0 +1,29 @@
+version: "2"
+
+# Spec REQ-04: 15 curated tools.
+# golangci-lint v2 split: 13 linters + 2 formatters = 15 total.
+# (`gofumpt` and `goimports` migrated from linters to formatters in v2.)
+
+linters:
+  enable:
+    - errcheck
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - bodyclose
+    - contextcheck
+  settings:
+    gocyclo:
+      min-complexity: 15
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
