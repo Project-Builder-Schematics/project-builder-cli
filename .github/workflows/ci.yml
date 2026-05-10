@@ -76,7 +76,7 @@ jobs:
           set -euo pipefail
           dirs=(
             cmd/builder
-            internal/features
+            internal/feature
             internal/shared/services
             internal/shared/discoverer
             internal/shared/inputs
