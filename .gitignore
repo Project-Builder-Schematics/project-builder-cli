@@ -40,3 +40,5 @@ graphify-out/
 
 # macOS metadata
 .DS_Store
+
+.claude/settings.local.json
