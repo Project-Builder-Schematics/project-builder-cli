@@ -1,7 +1,7 @@
 # Project Builder CLI — Roadmap
 
-> **Status**: planning — no Go product code yet.
-> **Last updated**: 2026-05-10
+> **Status**: planning — no Go product code yet. Phase 2 (architectural-skeleton) in flight, spec V1 draft awaiting sign.
+> **Last updated**: 2026-05-10 (post `sdd-spec V1` of `architectural-skeleton`)
 > **Canonical source**: This file mirrors the SDD pending-changes registry stored in engram under topic key `project/pending-changes`. When the two diverge, **engram is authoritative** for the SDD orchestrator; this file is the human-readable mirror.
 
 The CLI is being rewritten from TypeScript (legacy `@pbuilder/cli` v1.9.4) to Go, distributed via npm with platform-specific binaries (esbuild / turbo / Biome pattern). This document tracks the v1.0 milestone breakdown.
@@ -23,7 +23,7 @@ Each row is a future SDD `/plan` candidate. When picked up, the user invokes `/p
 | # | Change | Triage | Phase | Coverage | Status |
 |---|---|---|---|---|---|
 | 1 | v1.0 Repo Bootstrap & Tooling | L | foundations | go.mod, layout placeholders, Justfile, golangci-lint, lefthook, CI, README, CONTRIBUTING, .gitignore | ✅ DONE — issue [#6](https://github.com/Project-Builder-Schematics/project-builder-cli/issues/6) |
-| **2** | **Architectural Skeleton** | **L** | architecture | 9 ADRs realised + Engine/Renderer interfaces + Event types catalogue + structured Error type + main.go composeApp() skeleton + 8 features with `command.go`+`handler.go` stubs (compiles, inert) | 📋 **NEXT** |
+| **2** | **Architectural Skeleton** | **L** | architecture | 7 ADRs (ADR-006..ADR-012) + Engine/Renderer ports + 12-event sealed catalogue (with `Sensitive` flags) + structured `Error` (with `SafeMessage`/`MarshalJSON`/`Error()` lock) + `composeApp()` ≤120 LOC + 8 Cobra stubs (handlers ≤100 LOC) + 9 fitness functions | 🚧 **IN FLIGHT** — issue [#7](https://github.com/Project-Builder-Schematics/project-builder-cli/issues/7) (`/plan` complete, V2 signed, slices ready, awaiting `/build`) |
 | 3 | Pretty + JSON Renderer adapters | M | architecture | 2 modes of Renderer interface (TUI deferred to Phase 1B) | 📋 PENDING — after #2 |
 | 4 | AngularSubprocessAdapter | L | angular-adapter | Engine interface impl via `os/exec` spawning Node + `@angular-devkit/schematics-cli` | 📋 PENDING — after #2 |
 | 5 | `builder init` end-to-end | M | angular-adapter | First real command: generates `project-builder.json` + skill stub + folder structure + package.json script alias | 📋 PENDING — after #3 |
