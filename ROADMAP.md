@@ -1,7 +1,7 @@
 # Project Builder CLI — Roadmap
 
-> **Status**: Phase 1 (repo bootstrap & tooling) merged via PR #9 — repo has working CI, lint/format toolchain, lefthook pre-commit + commit-msg gates, deferred release stub, contributor docs. Phase 2 (architectural-skeleton) in flight, spec V2 signed, slices ready, awaiting `/build`. Still no Go product code.
-> **Last updated**: 2026-05-10 (post-merge of `v1.0-repo-bootstrap-and-tooling` PR #9)
+> **Status**: Phase 1 (repo bootstrap & tooling) merged via PR #9 — repo has working CI, lint/format toolchain, lefthook pre-commit + commit-msg gates, deferred release stub, contributor docs. Phase 2 (architectural-skeleton) `/plan` complete, awaiting `/build`. Phase 2 follow-on (renderer-adapters) `/plan` complete, awaiting `/build` (blocked on #2). Path discrepancy `internal/features/` → `internal/feature/` reconciled per locked ADR. Still no Go product code.
+> **Last updated**: 2026-05-10 (post `/plan renderer-adapters` + post path-discrepancy reconciliation)
 > **Canonical source**: This file mirrors the SDD pending-changes registry stored in engram under topic key `project/pending-changes`. When the two diverge, **engram is authoritative** for the SDD orchestrator; this file is the human-readable mirror.
 
 The CLI is being rewritten from TypeScript (legacy `@pbuilder/cli` v1.9.4) to Go, distributed via npm with platform-specific binaries (esbuild / turbo / Biome pattern). This document tracks the v1.0 milestone breakdown.
@@ -24,7 +24,7 @@ Each row is a future SDD `/plan` candidate. When picked up, the user invokes `/p
 |---|---|---|---|---|---|
 | 1 | v1.0 Repo Bootstrap & Tooling | L | foundations | go.mod, layout placeholders, Justfile, golangci-lint v2, lefthook, CI (lint+test+build+smoke), README, CONTRIBUTING, .gitignore, deferred release.yml stub | ✅ DONE — spec [#6](https://github.com/Project-Builder-Schematics/project-builder-cli/issues/6) closed via PR [#9](https://github.com/Project-Builder-Schematics/project-builder-cli/pull/9); followup [#8](https://github.com/Project-Builder-Schematics/project-builder-cli/issues/8) tracks multi-platform release |
 | **2** | **Architectural Skeleton** | **L** | architecture | 7 ADRs (ADR-006..ADR-012) + Engine/Renderer ports + 12-event sealed catalogue (with `Sensitive` flags) + structured `Error` (with `SafeMessage`/`MarshalJSON`/`Error()` lock) + `composeApp()` ≤120 LOC + 8 Cobra stubs (handlers ≤100 LOC) + 9 fitness functions | 🚧 **IN FLIGHT** — issue [#7](https://github.com/Project-Builder-Schematics/project-builder-cli/issues/7) (`/plan` complete, V2 signed, slices ready, awaiting `/build`) |
-| 3 | Pretty + JSON Renderer adapters | M | architecture | 2 modes of Renderer interface (TUI deferred to Phase 1B) | 📋 PENDING — after #2 |
+| **3** | **Pretty + JSON Renderer adapters** | **M** | architecture | 3 capabilities (`pretty-renderer`, `json-renderer`, `renderer-factory`) + composition-root delta — TUI deferred to Phase 1B; 14 REQs across 4 domains; 4 ADRs; 3 SPIDR slices | 🚧 **IN FLIGHT** — spec [#10](https://github.com/Project-Builder-Schematics/project-builder-cli/issues/10) (`/plan` complete, V1 signed, slices ready, **`/build` BLOCKED on #2**) |
 | 4 | AngularSubprocessAdapter | L | angular-adapter | Engine interface impl via `os/exec` spawning Node + `@angular-devkit/schematics-cli` | 📋 PENDING — after #2 |
 | 5 | `builder init` end-to-end | M | angular-adapter | First real command: generates `project-builder.json` + skill stub + folder structure + package.json script alias | 📋 PENDING — after #3 |
 | 6 | `builder execute` end-to-end | L | angular-adapter | Central command. Full 6-step pipeline. Requires #4 functional | 📋 PENDING — after #4 + #5 |
