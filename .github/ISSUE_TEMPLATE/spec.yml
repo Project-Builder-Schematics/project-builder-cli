@@ -1,0 +1,92 @@
+name: Spec Request
+description: File a change to plan via the SDD pipeline (triage → explore → propose → spec → design).
+title: "[Spec] "
+labels: ["type-spec"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to request a new change planned via SDD. The orchestrator runs triage, explore, propose, spec, and design phases. Output: a signed spec + design artefacts referenced from this issue.
+
+        Triage classifies XS/S/M/L. XL changes are HALTED and decomposed.
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      description: Which v1 phase does this change belong to?
+      options:
+        - phase-1-foundations
+        - phase-2-architecture
+        - phase-3-angular-adapter
+        - phase-4-engine-swap
+    validations:
+      required: true
+
+  - type: dropdown
+    id: size
+    attributes:
+      label: Estimated size (pre-triage)
+      description: Triage may revise this. XL changes will be HALTed and decomposed.
+      options:
+        - XS
+        - S
+        - M
+        - L
+        - XL
+    validations:
+      required: true
+
+  - type: textarea
+    id: intent
+    attributes:
+      label: Intent
+      description: One paragraph — what is this change FOR? What user value does it deliver?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope-in
+    attributes:
+      label: Scope (in)
+      description: Capabilities included in this change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope-out
+    attributes:
+      label: Scope (out)
+      description: Capabilities explicitly NOT in this change. Out-of-scope items found during execution become followup issues.
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Initial requirements
+      description: |
+        Initial REQ-IDs and Given/When/Then scenarios. The spec phase refines these.
+        Format:
+          REQ-001: <one-line description>
+            Given: ...
+            When: ...
+            Then: ...
+
+  - type: checkboxes
+    id: sensitive
+    attributes:
+      label: Sensitive areas touched
+      description: Selecting any auto-invokes the security-engineer persona in the Council.
+      options:
+        - label: Subprocess invocation (Angular CLI / npm registry)
+        - label: AI skill artifact generation (.claude/skills, CLAUDE.md, AGENTS.md)
+        - label: Global cache management (~/.pbuilder/cache)
+        - label: Multi-platform binary distribution (npm packages)
+        - label: project-builder.json parsing
+        - label: Schematic execution (script + anti-script enforcement)
+        - label: Other (describe in scope)
+
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback plan
+      description: How do we undo this change if it ships and breaks something?

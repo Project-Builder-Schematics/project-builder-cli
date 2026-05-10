@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Project Builder CLI Discussions
+    url: https://github.com/Project-Builder-Schematics/project-builder-cli/discussions
+    about: Open-ended discussion, ideas, RFCs (use these for canonical specs and architecture conversations).

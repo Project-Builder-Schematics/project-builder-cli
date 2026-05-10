@@ -1,0 +1,57 @@
+name: Architectural Decision Record
+description: Capture a substantive architectural decision (Context / Decision / Alternatives / Consequences).
+title: "[ADR] "
+labels: ["type-adr"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ADRs capture decisions that shape the architecture and that future readers need to understand without going through git history. One ADR per decision. ADRs that prove durable across changes are promoted to `project/architectural-decisions` during archive.
+
+  - type: input
+    id: status
+    attributes:
+      label: Status
+      description: proposed | accepted | superseded | deprecated
+      placeholder: proposed
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What is the problem? What forces are at play? Why does this decision need to be made now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision
+      description: What is the change being proposed or made? Be specific.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other options were evaluated and why were they rejected?
+    validations:
+      required: true
+
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Consequences
+      description: Positive AND negative. What becomes easier? What becomes harder? Long-term tradeoffs?
+    validations:
+      required: true
+
+  - type: input
+    id: related-spec
+    attributes:
+      label: Related spec
+      description: Issue number of the parent spec (if any).
+      placeholder: "#XX"

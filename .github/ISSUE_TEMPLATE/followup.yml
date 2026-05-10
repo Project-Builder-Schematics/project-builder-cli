@@ -1,0 +1,48 @@
+name: Followup (out-of-scope discovery)
+description: Item discovered during an SDD phase that is legitimate but out of scope of the current change.
+title: "[Followup] "
+labels: ["type-followup", "status-out-of-scope"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when explore/propose/spec/design/apply/verify/archive surfaces something legitimate but out of scope of the current change. Filed here, the item enters `project/pending-changes`. When picked up later, promote it to a regular spec.
+
+  - type: dropdown
+    id: discovered-during
+    attributes:
+      label: Discovered during
+      options:
+        - explore
+        - propose
+        - spec
+        - design
+        - slice
+        - apply
+        - verify
+        - archive
+    validations:
+      required: true
+
+  - type: input
+    id: parent-change
+    attributes:
+      label: Parent change
+      description: Issue number of the change where this was discovered.
+      placeholder: "#XX"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is the followup? What was observed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested-action
+    attributes:
+      label: Suggested action
+      description: How would this be addressed when picked up? (Spec needed, ADR, refactor, etc.)
