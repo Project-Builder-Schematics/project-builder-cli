@@ -79,3 +79,10 @@ jobs:
           just fmt
           git diff --exit-code || { echo "just fmt not idempotent"; exit 1; }
           echo "fmt: idempotent"
+
+      - name: smoke (release.yml deferred stub)
+        run: |
+          set -euo pipefail
+          grep -E '^# DEFERRED.*see issue #[0-9]+' .github/workflows/release.yml \
+            || { echo "release.yml missing DEFERRED comment with issue ref"; exit 1; }
+          echo "release.yml: deferred stub OK"
