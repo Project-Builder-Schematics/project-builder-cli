@@ -3,8 +3,49 @@ name: CI
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: detect go files
+        id: detect
+        run: |
+          count=$(find cmd internal -name '*.go' 2>/dev/null | wc -l)
+          echo "count=${count}" >> "${GITHUB_OUTPUT}"
+
+      - uses: actions/setup-go@v5
+        if: steps.detect.outputs.count != '0'
+        with:
+          go-version: '1.23'
+
+      - uses: golangci/golangci-lint-action@v6
+        if: steps.detect.outputs.count != '0'
+        with:
+          version: v2.12.2
+
+      - name: lint skipped (empty source)
+        if: steps.detect.outputs.count == '0'
+        run: echo "no .go files yet — lint job is a no-op"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - uses: extractions/setup-just@v2
+
+      - name: just test
+        run: just test
+
   build:
     runs-on: ubuntu-latest
     steps:
@@ -18,6 +59,17 @@ jobs:
 
       - name: just build
         run: just build
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - uses: extractions/setup-just@v2
 
       - name: smoke (layout invariants)
         run: |
@@ -48,8 +100,6 @@ jobs:
       - name: architectural (linter bundle = 15 curated tools)
         run: |
           set -euo pipefail
-          # Spec REQ-04: 13 linters + 2 formatters = 15 (gofumpt + goimports
-          # are formatters in golangci-lint v2).
           want=(errcheck gocyclo gosec govet ineffassign misspell revive staticcheck unconvert unparam unused bodyclose contextcheck gofumpt goimports)
           got=$( { yq '.linters.enable[]' .golangci.yml; yq '.formatters.enable[]' .golangci.yml; } | sort -u )
           want_sorted=$(printf "%s\n" "${want[@]}" | sort -u)
@@ -73,8 +123,8 @@ jobs:
         run: |
           set -euo pipefail
           go install mvdan.cc/gofumpt@v0.10.0
-          go install golang.org/x/tools/cmd/goimports@latest
-          export PATH="$(go env GOPATH)/bin:$PATH"
+          go install golang.org/x/tools/cmd/goimports@v0.45.0
+          export PATH="$(go env GOPATH)/bin:${PATH}"
           just fmt
           just fmt
           git diff --exit-code || { echo "just fmt not idempotent"; exit 1; }
@@ -86,3 +136,12 @@ jobs:
           grep -E '^# DEFERRED.*see issue #[0-9]+' .github/workflows/release.yml \
             || { echo "release.yml missing DEFERRED comment with issue ref"; exit 1; }
           echo "release.yml: deferred stub OK"
+
+      - name: architectural (no unpinned uses in workflows)
+        run: |
+          set -euo pipefail
+          if grep -rnE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[^#]*@latest' .github/workflows/; then
+            echo "REQ-03.1 violated: uses entry pointing at @latest"
+            exit 1
+          fi
+          echo "version-pin: all uses entries pinned to major version"
