@@ -35,5 +35,8 @@ dist/
 graphify-out/
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# macOS metadata
+.DS_Store
