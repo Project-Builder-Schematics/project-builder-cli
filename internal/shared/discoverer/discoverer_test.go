@@ -60,6 +60,9 @@ func Test_FindNode_NodeBinary_Empty_ReturnsError(t *testing.T) {
 	// Also set PATH to empty so exec.LookPath("node") fails.
 	t.Setenv("PATH", "")
 
+	// Neutralise well-known paths — CI runners pre-install node at /usr/bin/node.
+	discoverer.SetWellKnownNodePathsFn(t, func() []string { return nil })
+
 	d := discoverer.New()
 	_, err := d.FindNode()
 	if err == nil {
@@ -127,6 +130,9 @@ func Test_FindNode_PathLookup_VersionTooLow(t *testing.T) {
 func Test_FindNode_NotFound(t *testing.T) {
 	t.Setenv("NODE_BINARY", "")
 	t.Setenv("PATH", t.TempDir()) // dir with no node binary
+
+	// Neutralise well-known paths — CI runners pre-install node at /usr/bin/node.
+	discoverer.SetWellKnownNodePathsFn(t, func() []string { return nil })
 
 	d := discoverer.New()
 	_, err := d.FindNode()

@@ -67,7 +67,7 @@ func (d *Discoverer) FindNode() (string, error) {
 	}
 
 	// Priority 3: well-known paths.
-	for _, candidate := range wellKnownNodePaths() {
+	for _, candidate := range wellKnownNodePathsFn() {
 		if _, err := os.Stat(candidate); err == nil {
 			return validateNodeVersion(candidate)
 		}
@@ -232,6 +232,12 @@ func schematicsName() string {
 	return "schematics"
 }
 
+// wellKnownNodePathsFn is the indirection used by FindNode to look up
+// well-known Node.js install paths. Production code uses wellKnownNodePaths;
+// tests override it via export_test.go SetWellKnownNodePathsFn to isolate
+// from the host environment (notably CI runners that pre-install node).
+var wellKnownNodePathsFn = wellKnownNodePaths
+
 // wellKnownNodePaths returns a list of common Node.js installation paths for
 // the current platform. Used as a fallback when NODE_BINARY and PATH fail.
 func wellKnownNodePaths() []string {
@@ -246,7 +252,8 @@ func wellKnownNodePaths() []string {
 		if home != "" {
 			// Add nvm-style paths (glob not supported — add common major versions).
 			for _, major := range []string{"20", "18", "22", "21", "19"} {
-				candidates = append(candidates,
+				candidates = append(
+					candidates,
 					filepath.Join(home, ".nvm", "versions", "node", "v"+major+".0.0", "bin", "node"),
 				)
 			}
