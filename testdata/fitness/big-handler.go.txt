@@ -1,0 +1,201 @@
+package bighandler
+
+import (
+	"github.com/spf13/cobra"
+)
+
+// RunE is a deliberately bloated handler that exceeds 100 SLOC.
+// This fixture exists solely to trigger the handler-loc fitness function.
+// It must NOT compile as real Go code (hence the .go.txt extension).
+func RunE(_ *cobra.Command, _ []string) error {
+	// line 1
+	x := 0
+	// line 2
+	x++
+	// line 3
+	x++
+	// line 4
+	x++
+	// line 5
+	x++
+	// line 6
+	x++
+	// line 7
+	x++
+	// line 8
+	x++
+	// line 9
+	x++
+	// line 10
+	x++
+	// line 11
+	x++
+	// line 12
+	x++
+	// line 13
+	x++
+	// line 14
+	x++
+	// line 15
+	x++
+	// line 16
+	x++
+	// line 17
+	x++
+	// line 18
+	x++
+	// line 19
+	x++
+	// line 20
+	x++
+	// line 21
+	x++
+	// line 22
+	x++
+	// line 23
+	x++
+	// line 24
+	x++
+	// line 25
+	x++
+	// line 26
+	x++
+	// line 27
+	x++
+	// line 28
+	x++
+	// line 29
+	x++
+	// line 30
+	x++
+	// line 31
+	x++
+	// line 32
+	x++
+	// line 33
+	x++
+	// line 34
+	x++
+	// line 35
+	x++
+	// line 36
+	x++
+	// line 37
+	x++
+	// line 38
+	x++
+	// line 39
+	x++
+	// line 40
+	x++
+	// line 41
+	x++
+	// line 42
+	x++
+	// line 43
+	x++
+	// line 44
+	x++
+	// line 45
+	x++
+	// line 46
+	x++
+	// line 47
+	x++
+	// line 48
+	x++
+	// line 49
+	x++
+	// line 50
+	x++
+	// line 51
+	x++
+	// line 52
+	x++
+	// line 53
+	x++
+	// line 54
+	x++
+	// line 55
+	x++
+	// line 56
+	x++
+	// line 57
+	x++
+	// line 58
+	x++
+	// line 59
+	x++
+	// line 60
+	x++
+	// line 61
+	x++
+	// line 62
+	x++
+	// line 63
+	x++
+	// line 64
+	x++
+	// line 65
+	x++
+	// line 66
+	x++
+	// line 67
+	x++
+	// line 68
+	x++
+	// line 69
+	x++
+	// line 70
+	x++
+	// line 71
+	x++
+	// line 72
+	x++
+	// line 73
+	x++
+	// line 74
+	x++
+	// line 75
+	x++
+	// line 76
+	x++
+	// line 77
+	x++
+	// line 78
+	x++
+	// line 79
+	x++
+	// line 80
+	x++
+	// line 81
+	x++
+	// line 82
+	x++
+	// line 83
+	x++
+	// line 84
+	x++
+	// line 85
+	x++
+	// line 86
+	x++
+	// line 87
+	x++
+	// line 88
+	x++
+	// line 89
+	x++
+	// line 90
+	x++
+	// line 91
+	x++
+	// line 92
+	x++
+	// line 93
+	x++
+	// line 94
+	x++
+	_ = x
+	return nil
+}

@@ -1,0 +1,13 @@
+package crossfeature
+
+// This fixture simulates a file inside one feature package that imports another
+// sibling feature package. This violates the no-cross-feature rule (FF-02).
+// The fitness script detects cross-feature imports via import path matching.
+
+// VIOLATION: "internal/feature/init" importing "internal/feature/add" directly.
+// In real Go this would be: import _ "github.com/.../internal/feature/add"
+// The fixture is plain text so the fitness script can grep/scan it safely.
+
+import (
+	_ "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/add"
+)

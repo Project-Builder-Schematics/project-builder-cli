@@ -1,0 +1,11 @@
+package engine
+
+// This fixture simulates an untyped []string field inside the engine package
+// WITHOUT the fitness:allow-untyped-args exemption marker.
+// The fitness script (FF-08) negative-greps for \b\[\]string\b in engine/*.go
+// and excludes only lines marked with // fitness:allow-untyped-args env-allowlist.
+
+// VIOLATION: raw []string field without the exemption marker.
+type BadRequest struct {
+	ArbitraryArgs []string
+}

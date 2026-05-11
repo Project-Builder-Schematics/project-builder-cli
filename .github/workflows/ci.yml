@@ -145,3 +145,21 @@ jobs:
             exit 1
           fi
           echo "version-pin: all uses entries pinned to major version"
+
+  fitness:
+    needs: [lint, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - uses: extractions/setup-just@v2
+
+      - name: fitness (all 9 functions against real codebase)
+        run: just fitness
+
+      - name: fitness-meta (each function catches its bad-pattern fixture)
+        run: just fitness-meta
