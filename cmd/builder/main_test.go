@@ -18,6 +18,9 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	renderjson "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/json"
+	prettyrend "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/pretty"
 )
 
 // Test_ComposeApp_AllInterfaceFieldsNonNil covers composition-root.REQ-01.1.
@@ -173,6 +176,82 @@ func collectLeaves(cmd *cobra.Command) []string {
 		leaves = append(leaves, collectLeaves(sub)...)
 	}
 	return leaves
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// renderer-adapters.REQ-13 — composeApp wires renderer from factory
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_ComposeApp_WiresJSONRenderer covers REQ-13.1.
+// composeApp with OutputMode "json" must return a *json.JSONRenderer as Renderer.
+func Test_ComposeApp_WiresJSONRenderer(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{OutputMode: "json"})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+	if app.Renderer == nil {
+		t.Fatal("app.Renderer is nil")
+	}
+	if _, ok := app.Renderer.(*renderjson.Renderer); !ok {
+		t.Errorf("app.Renderer = %T; want *json.Renderer", app.Renderer)
+	}
+}
+
+// Test_ComposeApp_WiresPrettyRenderer covers REQ-13.2.
+// composeApp with OutputMode "pretty" must return a *pretty.PrettyRenderer as Renderer.
+func Test_ComposeApp_WiresPrettyRenderer(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{OutputMode: "pretty"})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+	if app.Renderer == nil {
+		t.Fatal("app.Renderer is nil")
+	}
+	if _, ok := app.Renderer.(*prettyrend.Renderer); !ok {
+		t.Errorf("app.Renderer = %T; want *pretty.Renderer", app.Renderer)
+	}
+}
+
+// Test_ComposeApp_InvalidOutputMode covers REQ-14.2 at the composeApp level.
+// composeApp with an unknown OutputMode must return a non-nil error.
+func Test_ComposeApp_InvalidOutputMode(t *testing.T) {
+	t.Parallel()
+
+	_, err := composeApp(Config{OutputMode: "xml"})
+	if err == nil {
+		t.Fatal("expected error for invalid OutputMode; got nil")
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// renderer-adapters.REQ-14.1 — --output flag appears in --help output
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_RootCmd_OutputFlagInHelp covers REQ-14.1.
+// The root Cobra command's help text must contain "--output".
+func Test_RootCmd_OutputFlagInHelp(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{OutputMode: "json"})
+	if err != nil {
+		t.Fatalf("composeApp: %v", err)
+	}
+
+	var buf bytes.Buffer
+	app.Root.SetOut(&buf)
+	app.Root.SetErr(&buf)
+	app.Root.SetArgs([]string{"--help"})
+	// Execute returns a help-request "error" from Cobra — ignore it.
+	_ = app.Root.Execute()
+
+	helpText := buf.String()
+	if !strings.Contains(helpText, "--output") {
+		t.Errorf("--help output does not contain \"--output\"; got:\n%s", helpText)
+	}
 }
 
 // Test_GoMod_HasPinnedDeps covers dependencies.REQ-01.1.
