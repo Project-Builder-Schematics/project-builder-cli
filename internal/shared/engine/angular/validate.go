@@ -1,0 +1,87 @@
+// Package angular implements AngularSubprocessAdapter — the first concrete
+// implementation of engine.Engine that spawns Node.js via os/exec.
+//
+// SECURITY: This package MUST NOT invoke a shell. All exec calls use
+// exec.CommandContext directly with typed arguments. SchematicRef fields are
+// validated before reaching cmd.Args.
+package angular
+
+import (
+	"strings"
+
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine"
+	apperrors "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+)
+
+// shellMetachars is the set of characters forbidden in any SchematicRef field.
+//
+// These are shell metacharacters that, if passed to a shell, would execute
+// arbitrary code. The adapter uses exec.CommandContext (no shell), but we
+// reject them anyway as defence-in-depth: they have no legitimate purpose in
+// a schematic name, collection, or version.
+//
+// Forbidden: $ ` ( ) { } | ; & > < \ " ' \n \r NUL
+const shellMetachars = "$`(){}|;&><\\\"'\n\r\x00"
+
+// validateRef validates a SchematicRef before allowing it to reach cmd.Args.
+//
+// Rules enforced (REQ-05):
+//  1. Name MUST NOT contain ".." — no path traversal (REQ-02.2, REQ-05)
+//  2. Name MUST NOT contain "/" — collection-relative resolution only (REQ-05.2)
+//  3. All fields MUST NOT contain shell metacharacters: $ ` ( ) { } | ; & > < \ " ' \n \r NUL (REQ-02.3, REQ-05.3)
+//  4. Collection MUST NOT contain ".." — no path traversal
+//
+// Returns *errors.Error{Code: ErrCodeInvalidInput, Op: "angular.validate_ref"}
+// on any violation. Returns nil if the ref is valid.
+func validateRef(ref engine.SchematicRef) error {
+	// REQ-05.2, REQ-02.2: Name must not contain "/" (absolute path) or ".." (traversal).
+	if strings.Contains(ref.Name, "/") {
+		return &apperrors.Error{
+			Code:    apperrors.ErrCodeInvalidInput,
+			Op:      "angular.validate_ref",
+			Message: "SchematicRef.Name must not contain '/' — use a collection-relative name",
+		}
+	}
+	if strings.Contains(ref.Name, "..") {
+		return &apperrors.Error{
+			Code:    apperrors.ErrCodeInvalidInput,
+			Op:      "angular.validate_ref",
+			Message: "SchematicRef.Name must not contain '..' — path traversal is not permitted",
+		}
+	}
+
+	// REQ-02.2 (collection): path traversal in Collection is also forbidden.
+	if strings.Contains(ref.Collection, "..") {
+		return &apperrors.Error{
+			Code:    apperrors.ErrCodeInvalidInput,
+			Op:      "angular.validate_ref",
+			Message: "SchematicRef.Collection must not contain '..' — path traversal is not permitted",
+		}
+	}
+
+	// REQ-02.3, REQ-05.3: forbid shell metacharacters and NUL byte in all fields.
+	if err := rejectMetachars("Collection", ref.Collection); err != nil {
+		return err
+	}
+	if err := rejectMetachars("Name", ref.Name); err != nil {
+		return err
+	}
+	if err := rejectMetachars("Version", ref.Version); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// rejectMetachars returns a validation error if s contains any character from
+// shellMetachars. fieldName is used only for the human-readable message.
+func rejectMetachars(fieldName, s string) error {
+	if strings.ContainsAny(s, shellMetachars) {
+		return &apperrors.Error{
+			Code:    apperrors.ErrCodeInvalidInput,
+			Op:      "angular.validate_ref",
+			Message: "SchematicRef." + fieldName + " contains a forbidden character (shell metacharacter or NUL byte)",
+		}
+	}
+	return nil
+}

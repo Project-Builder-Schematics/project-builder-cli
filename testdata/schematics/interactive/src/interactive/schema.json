@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$id": "InteractiveSchema",
+  "title": "Interactive Schematic",
+  "description": "Prompts for a name, then creates a file.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The name to greet.",
+      "x-prompt": "What is your name?"
+    }
+  },
+  "required": ["name"]
+}

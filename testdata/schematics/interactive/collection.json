@@ -1,0 +1,10 @@
+{
+  "$schema": "../../../node_modules/@angular-devkit/schematics/collection-schema.json",
+  "schematics": {
+    "interactive": {
+      "description": "A schematic that prompts for input (for integration testing REQ-09).",
+      "factory": "./src/interactive",
+      "schema": "./src/interactive/schema.json"
+    }
+  }
+}

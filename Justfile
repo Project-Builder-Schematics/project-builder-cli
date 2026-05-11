@@ -25,6 +25,11 @@ fmt:
 run *args:
     go run ./cmd/builder {{args}}
 
+# Run integration tests (require Node.js >= 18 + @angular-devkit/schematics-cli >= 17 on PATH).
+# Skips gracefully if Node or schematics-cli is not available.
+test-integration:
+    go test -v -tags=integration -timeout 60s ./internal/shared/engine/angular/...
+
 # Run all 9 fitness functions against the real codebase. Must exit 0.
 # Enforces: fitness-functions-ci.REQ-01.1 through .09
 fitness:

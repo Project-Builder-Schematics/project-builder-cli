@@ -24,6 +24,7 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/sync"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/validate"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine/angular"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render"
 )
 
@@ -46,10 +47,10 @@ func (c Config) validate() error {
 // All interface fields are guaranteed non-nil after a successful composeApp
 // call (composition-root.REQ-01.1).
 type App struct {
-	// Engine is the schematic execution port. Wired to FakeEngine at skeleton.
+	// Engine is the schematic execution port. Wired to AngularSubprocessAdapter (/plan #4).
 	Engine engine.Engine
 
-	// Renderer is the event-stream output port. Wired to NoopRenderer at skeleton.
+	// Renderer is the event-stream output port. Wired via render.NewRenderer factory (/plan #3).
 	Renderer render.Renderer
 
 	// Root is the Cobra root command with all feature sub-commands registered.
@@ -59,15 +60,15 @@ type App struct {
 // composeApp wires all dependencies and returns the composed *App.
 //
 // This is the SOLE site in the codebase where concrete adapter types are
-// imported and instantiated (ADR-011). The function body ceiling is ≤120 SLOC
+// imported and instantiated (ADR-010). The function body ceiling is ≤120 SLOC
 // (composition-root.REQ-01.2, enforced by Test_ComposeApp_LOC_Within120).
 func composeApp(cfg Config) (*App, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
-	// Engine adapter — FakeEngine until /plan #4.
-	eng := &engine.FakeEngine{}
+	// Engine adapter — AngularSubprocessAdapter (real; /plan #4 S-000).
+	eng := angular.NewAdapter()
 
 	// Renderer adapter — selected by factory based on --output flag + TTY.
 	// isTTY is injected here (production path); tests pass their own stub.
