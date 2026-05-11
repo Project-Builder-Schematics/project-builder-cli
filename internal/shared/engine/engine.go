@@ -101,27 +101,91 @@ type SchematicRef struct {
 // mandated by the Engine interface contract. On ctx.Done(), it emits a
 // Cancelled terminal event and closes the channel promptly.
 //
+// # Sensitive propagation (CONTRACT:STUB)
+//
+// When Inbox is non-empty, FakeEngine emits each InputRequested event,
+// waits for a reply on the paired InboxReplies receive channel (ctx-aware),
+// then emits a paired InputProvided with Sensitive propagated from the
+// request. After the Inbox is exhausted the goroutine blocks on ctx.Done()
+// and emits Cancelled before closing.
+//
+// Inbox and InboxReplies must have the same length; index i of InboxReplies
+// is the receive side of the channel stored in Inbox[i].Reply.
+//
 // CONTRACT:STUB — FakeEngine is for testing and composition-root wiring
 // during the skeleton phase only. Replace at /plan #4 with
 // AngularSubprocessAdapter or equivalent real implementation.
-type FakeEngine struct{}
+type FakeEngine struct {
+	// Inbox is a test-only list of InputRequested events that FakeEngine will
+	// emit (in order) before blocking on ctx.Done(). For each entry, FakeEngine
+	// waits for a reply on the paired InboxReplies channel and emits a paired
+	// InputProvided{Sensitive: req.Sensitive, Prompt: req.Prompt, Value: reply}.
+	//
+	// CONTRACT:STUB — production engines do not use this field.
+	Inbox []events.InputRequested
 
-// Execute implements Engine. Returns a channel that emits a single Cancelled
-// event and closes when ctx is cancelled, or emits Done and closes immediately
-// if ctx is already done.
+	// InboxReplies is the receive side of each InputRequested.Reply channel,
+	// paired by index with Inbox. Must be the same length as Inbox (or nil
+	// when Inbox is empty).
+	//
+	// CONTRACT:STUB — production engines do not use this field.
+	InboxReplies []<-chan string
+}
+
+// Execute implements Engine. Returns a channel that processes Inbox entries
+// (if any), then blocks until ctx is cancelled, emitting a Cancelled terminal
+// event and closing the channel.
 //
-// Sensitive propagation: if an InputRequested event were emitted (future
-// extension), FakeEngine would emit a paired InputProvided with
-// Sensitive propagated from the request. Current stub honours the channel
-// close contract only.
+// Sensitive propagation: for each InputRequested in Inbox, FakeEngine emits
+// the request, receives the reply via InboxReplies[i] (or cancels if ctx
+// fires first), and emits a paired InputProvided with Sensitive propagated
+// from the request. CONTRACT:STUB — see FakeEngine doc.
 func (f *FakeEngine) Execute(ctx context.Context, _ ExecuteRequest) (<-chan events.Event, error) {
-	ch := make(chan events.Event, 1)
+	// Buffer large enough to hold all Inbox events plus their paired responses
+	// plus the terminal Cancelled event; avoids blocking the goroutine on send.
+	bufSize := len(f.Inbox)*2 + 1
+	if bufSize < 1 {
+		bufSize = 1
+	}
+	ch := make(chan events.Event, bufSize)
 
 	go func() {
 		defer close(ch)
 
-		// Block until ctx is cancelled, then emit Cancelled terminal event.
-		// Honouring the 5-second cancellation ceiling mandated by the interface.
+		// Process each pre-loaded InputRequested in order.
+		for i, req := range f.Inbox {
+			// Emit the request so consumers can observe it.
+			ch <- req
+
+			// Receive the reply from the paired channel (ctx-aware).
+			var value string
+			select {
+			case v := <-f.InboxReplies[i]:
+				value = v
+			case <-ctx.Done():
+				ch <- events.Cancelled{}
+				return
+			}
+
+			// Emit paired InputProvided with Sensitive propagated.
+			ch <- events.InputProvided{
+				EventBase: events.EventBase{Seq: req.Seq + 1, At: req.At},
+				Prompt:    req.Prompt,
+				Value:     value,
+				Sensitive: req.Sensitive, // CONTRACT: propagate from request
+			}
+		}
+
+		// Inbox exhausted.
+		// If the Inbox was non-empty, emit Done to signal clean completion so
+		// consumers and tests don't have to cancel to drain the channel.
+		// If the Inbox was empty (zero items), block on ctx.Done() as before —
+		// this preserves the original FakeEngine behaviour for callers that
+		// don't use Inbox and control termination via context cancellation.
+		if len(f.Inbox) > 0 {
+			ch <- events.Done{}
+			return
+		}
 		<-ctx.Done()
 		ch <- events.Cancelled{}
 	}()

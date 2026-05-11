@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/events"
 )
 
 // compile-time interface satisfaction check (not a test function — package-level assertion).
@@ -215,4 +217,131 @@ func Test_FakeEngine_RespectsCtxDone_Within5s(t *testing.T) {
 			t.Error("channel did not close within 500ms after ctx cancel")
 		}
 	})
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// security.REQ-03.4 — FakeEngine propagates InputRequested.Sensitive → InputProvided.Sensitive
+// (S-004: Sensitive propagation contract — channel round-trip + noop discipline)
+// Note: slice doc listed events_test.go as the home for this test, but that would
+// create an import cycle (engine imports events; events cannot import engine).
+// Architecture wins — test lives here in engine_test.go. See apply-progress for rationale.
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_FakeEngine_PropagatesInputRequestedSensitive verifies that FakeEngine
+// honours the Sensitive propagation contract: when it processes an InputRequested
+// event with Sensitive=true and receives a reply, it MUST emit a paired
+// InputProvided{Sensitive:true}.
+//
+// CONTRACT:STUB — FakeEngine.Inbox + InboxReplies are test-only injection
+// mechanisms. Real engines implement this via /plan #4. Masking (not covered
+// here) is /plan #3.
+//
+// security.REQ-03.4 / event-catalogue.REQ-02.4
+func Test_FakeEngine_PropagatesInputRequestedSensitive(t *testing.T) {
+	replyCh := make(chan string, 1)
+
+	fe := &FakeEngine{
+		Inbox: []events.InputRequested{
+			{
+				EventBase: events.EventBase{Seq: 1, At: time.Now()},
+				Prompt:    "Enter password",
+				Sensitive: true,
+				Reply:     (chan<- string)(replyCh),
+			},
+		},
+		InboxReplies: []<-chan string{replyCh},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := fe.Execute(ctx, ExecuteRequest{})
+	if err != nil {
+		t.Fatalf("Execute returned unexpected error: %v", err)
+	}
+
+	// Supply the reply while Execute is running; do this in the background so
+	// we don't block the test goroutine before draining the event channel.
+	go func() {
+		replyCh <- "hunter2"
+	}()
+
+	// Collect all emitted events; channel must close after Inbox is exhausted.
+	var received []events.Event
+	for ev := range ch {
+		received = append(received, ev)
+	}
+
+	// Find the InputProvided event.
+	var provided *events.InputProvided
+	for _, ev := range received {
+		if ip, ok := ev.(events.InputProvided); ok {
+			ip := ip
+			provided = &ip
+			break
+		}
+	}
+
+	if provided == nil {
+		t.Fatalf("no InputProvided event emitted; got %d events: %v", len(received), received)
+	}
+
+	if !provided.Sensitive {
+		t.Errorf("InputProvided.Sensitive = false; want true (propagated from InputRequested.Sensitive=true)")
+	}
+
+	if provided.Prompt != "Enter password" {
+		t.Errorf("InputProvided.Prompt = %q; want %q", provided.Prompt, "Enter password")
+	}
+
+	if provided.Value != "hunter2" {
+		t.Errorf("InputProvided.Value = %q; want %q", provided.Value, "hunter2")
+	}
+}
+
+// Test_FakeEngine_PropagatesInputRequestedSensitive_False verifies that
+// Sensitive=false is also propagated correctly (not hardcoded to true).
+// security.REQ-03.4
+func Test_FakeEngine_PropagatesInputRequestedSensitive_False(t *testing.T) {
+	replyCh := make(chan string, 1)
+
+	fe := &FakeEngine{
+		Inbox: []events.InputRequested{
+			{
+				EventBase: events.EventBase{Seq: 1, At: time.Now()},
+				Prompt:    "Enter username",
+				Sensitive: false,
+				Reply:     (chan<- string)(replyCh),
+			},
+		},
+		InboxReplies: []<-chan string{replyCh},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := fe.Execute(ctx, ExecuteRequest{})
+	if err != nil {
+		t.Fatalf("Execute returned unexpected error: %v", err)
+	}
+
+	go func() {
+		replyCh <- "admin"
+	}()
+
+	var provided *events.InputProvided
+	for ev := range ch {
+		if ip, ok := ev.(events.InputProvided); ok {
+			ip := ip
+			provided = &ip
+		}
+	}
+
+	if provided == nil {
+		t.Fatal("no InputProvided event emitted")
+	}
+
+	if provided.Sensitive {
+		t.Error("InputProvided.Sensitive = true; want false (propagated from InputRequested.Sensitive=false)")
+	}
 }
