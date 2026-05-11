@@ -7,9 +7,11 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 
+	"github.com/charmbracelet/fang"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
@@ -126,8 +128,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := app.Root.Execute(); err != nil {
-		slog.Error("command failed", "error", err)
+	// fang.Execute wraps Cobra's Execute with styled help, error, and
+	// version output (charmbracelet aesthetics). Tests still drive
+	// app.Root.Execute() directly to keep assertions deterministic.
+	if err := fang.Execute(context.Background(), app.Root); err != nil {
 		os.Exit(1)
 	}
 }

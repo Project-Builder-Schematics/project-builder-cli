@@ -4,7 +4,7 @@
 //   - composition-root.REQ-01.1 — composeApp returns *App with all interface fields non-nil
 //   - composition-root.REQ-01.2 — composeApp function body is ≤120 SLOC
 //   - cobra-command-tree.REQ-01.1 — Root has exactly 8 leaf commands
-//   - dependencies.REQ-01.1 — go.mod pins cobra v1.8.x, viper v1.19.x, charmbracelet/log v0.4.x
+//   - dependencies.REQ-01.1 — go.mod pins cobra v1.9.x, viper v1.19.x, charmbracelet/log v0.4.x
 //
 // CONTRACT:STUB — wires FakeEngine + NoopRenderer; production wiring at /plan #3+
 package main
@@ -255,7 +255,8 @@ func Test_RootCmd_OutputFlagInHelp(t *testing.T) {
 }
 
 // Test_GoMod_HasPinnedDeps covers dependencies.REQ-01.1.
-// Reads go.mod and verifies cobra v1.8.x, viper v1.19.x, charmbracelet/log v0.4.x.
+// Reads go.mod and verifies cobra v1.9.x, viper v1.19.x, charmbracelet/log v0.4.x.
+// cobra was bumped from v1.8.x to v1.9.x when charmbracelet/fang was added (fang requires >= v1.9).
 func Test_GoMod_HasPinnedDeps(t *testing.T) {
 	t.Parallel()
 
@@ -269,7 +270,7 @@ func Test_GoMod_HasPinnedDeps(t *testing.T) {
 		name    string
 		pattern string
 	}{
-		{"cobra v1.8.x", `github\.com/spf13/cobra v1\.8\.`},
+		{"cobra v1.9.x", `github\.com/spf13/cobra v1\.9\.`},
 		{"viper v1.19.x", `github\.com/spf13/viper v1\.19\.`},
 		{"charmbracelet/log v0.4.x", `github\.com/charmbracelet/log v0\.4\.`},
 	}
