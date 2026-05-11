@@ -1,0 +1,10 @@
+{
+  "$schema": "../../../node_modules/@angular-devkit/schematics/collection-schema.json",
+  "schematics": {
+    "hello": {
+      "description": "Creates a hello.txt file in the workspace root.",
+      "factory": "./src/hello-world",
+      "schema": "./src/hello-world/schema.json"
+    }
+  }
+}

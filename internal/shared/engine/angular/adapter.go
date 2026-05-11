@@ -55,6 +55,12 @@ type AngularSubprocessAdapter struct {
 	// to assert cmd.Path and cmd.Args without a shell. nil in production.
 	// REQ-02.1 test coverage.
 	cmdSpy func(cmd *exec.Cmd)
+
+	// runnerOverridePath, when non-empty, is used as the runner script path
+	// instead of writing the embedded bytes to a temp file. Used only in tests
+	// (via NewAdapterWithRunnerPath) to supply custom Node.js scripts for
+	// lifecycle/cancellation testing (S-001).
+	runnerOverridePath string
 }
 
 // NewAdapter returns an AngularSubprocessAdapter wired with the real Discoverer.
@@ -89,6 +95,31 @@ func NewAdapterWithCmdSpy(spy func(cmd *exec.Cmd)) *AngularSubprocessAdapter {
 	}
 }
 
+// NewAdapterWithRunnerPath returns an AngularSubprocessAdapter wired with the
+// real Discoverer but using the provided script path instead of the embedded
+// runner.js. Used only in tests (S-001 lifecycle/cancellation tests) where
+// custom Node.js scripts simulate blocking, SIGTERM-obeying, or SIGTERM-ignoring
+// processes.
+func NewAdapterWithRunnerPath(scriptPath string) *AngularSubprocessAdapter {
+	d := discoverer.New()
+	return &AngularSubprocessAdapter{
+		discovererFunc:     d.FindNode,
+		runnerOverridePath: scriptPath,
+	}
+}
+
+// NewAdapterWithCmdSpyAndRunnerPath combines NewAdapterWithCmdSpy and
+// NewAdapterWithRunnerPath for tests that need both a custom script and
+// cmd inspection (e.g. REQ-06.1: verify inputs not in cmd.Args).
+func NewAdapterWithCmdSpyAndRunnerPath(scriptPath string, spy func(cmd *exec.Cmd)) *AngularSubprocessAdapter {
+	d := discoverer.New()
+	return &AngularSubprocessAdapter{
+		discovererFunc:     d.FindNode,
+		runnerOverridePath: scriptPath,
+		cmdSpy:             spy,
+	}
+}
+
 // Execute begins schematic execution and returns a read-only event channel.
 //
 // Pre-execution steps (return error, channel is nil):
@@ -115,10 +146,22 @@ func (a *AngularSubprocessAdapter) Execute(
 		return nil, err
 	}
 
-	// Step 3: Write embedded runner.js to a temp file.
-	runnerTempPath, err := writeRunnerTemp()
-	if err != nil {
-		return nil, err
+	// Step 3: Resolve runner script path.
+	// Production: write embedded bytes to a temp file (REQ-19.2).
+	// Test override: use runnerOverridePath directly (no cleanup needed by adapter).
+	var runnerTempPath string
+	var isEmbedded bool
+	if a.runnerOverridePath != "" {
+		// Test override — use provided script path verbatim; do not delete it.
+		runnerTempPath = a.runnerOverridePath
+		isEmbedded = false
+	} else {
+		var writeErr error
+		runnerTempPath, writeErr = writeRunnerTemp()
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		isEmbedded = true
 	}
 
 	// Notify spy (test only) before process start.
@@ -128,10 +171,12 @@ func (a *AngularSubprocessAdapter) Execute(
 
 	// Step 4+5: Start process and launch goroutine fan-out.
 	// cmdSpy (test-only) is invoked inside startProcess before cmd.Start().
-	ch, _, err := startProcess(ctx, nodeBin, runnerTempPath, req.EnvAllowlist, a.cmdSpy)
+	ch, _, err := startProcess(ctx, nodeBin, runnerTempPath, req, a.cmdSpy, isEmbedded)
 	if err != nil {
-		// Clean up temp file if process failed to start.
-		_ = os.Remove(runnerTempPath)
+		// Clean up embedded temp file if process failed to start.
+		if isEmbedded {
+			_ = os.Remove(runnerTempPath)
+		}
 		return nil, err
 	}
 

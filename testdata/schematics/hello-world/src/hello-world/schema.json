@@ -1,0 +1,9 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$id": "HelloWorldSchema",
+  "title": "Hello World Schematic",
+  "description": "Creates a hello.txt file.",
+  "type": "object",
+  "properties": {},
+  "required": []
+}
