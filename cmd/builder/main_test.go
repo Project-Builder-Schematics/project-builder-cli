@@ -1,0 +1,208 @@
+// Package main_test covers composition-root and cobra-command-tree REQs.
+//
+// Tests:
+//   - composition-root.REQ-01.1 — composeApp returns *App with all interface fields non-nil
+//   - composition-root.REQ-01.2 — composeApp function body is ≤120 SLOC
+//   - cobra-command-tree.REQ-01.1 — Root has exactly 8 leaf commands
+//   - dependencies.REQ-01.1 — go.mod pins cobra v1.8.x, viper v1.19.x, charmbracelet/log v0.4.x
+//
+// CONTRACT:STUB — wires FakeEngine + NoopRenderer; production wiring at /plan #3+
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+)
+
+// Test_ComposeApp_AllInterfaceFieldsNonNil covers composition-root.REQ-01.1.
+// Reflects over the App struct and asserts every interface/pointer field is non-nil.
+func Test_ComposeApp_AllInterfaceFieldsNonNil(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+	if app == nil {
+		t.Fatal("composeApp returned nil *App")
+	}
+	if app.Engine == nil {
+		t.Error("App.Engine is nil — composition-root.REQ-01.1 violated")
+	}
+	if app.Renderer == nil {
+		t.Error("App.Renderer is nil — composition-root.REQ-01.1 violated")
+	}
+	if app.Root == nil {
+		t.Error("App.Root is nil — composition-root.REQ-01.1 violated")
+	}
+}
+
+// Test_ComposeApp_DoesNotPanic covers composition-root.REQ-01.1 (zero Config).
+func Test_ComposeApp_DoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	var panicked bool
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+			}
+		}()
+		_, _ = composeApp(Config{})
+	}()
+
+	if panicked {
+		t.Error("composeApp panicked with zero-value Config")
+	}
+}
+
+// Test_ComposeApp_LOC_Within120 covers composition-root.REQ-01.2.
+// Reads the source file and counts non-blank, non-comment lines within the
+// composeApp function body (between the opening brace and its matching close).
+func Test_ComposeApp_LOC_Within120(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("cannot read main.go: %v", err)
+	}
+
+	sloc := countComposeAppSLOC(src)
+	if sloc > 120 {
+		t.Errorf("composeApp has %d SLOC — exceeds 120 LOC ceiling (composition-root.REQ-01.2)", sloc)
+	}
+	if sloc == 0 {
+		t.Error("composeApp not found in main.go or has zero SLOC — implementation missing")
+	}
+}
+
+// countComposeAppSLOC counts non-blank non-comment lines within the composeApp
+// function body. It locates "func composeApp(" and counts from the line after
+// the opening `{` to the matching closing `}`.
+func countComposeAppSLOC(src []byte) int {
+	scanner := bufio.NewScanner(bytes.NewReader(src))
+	var inFunc, pastOpen bool
+	depth := 0
+	sloc := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		if !inFunc {
+			if strings.HasPrefix(trimmed, "func composeApp(") {
+				inFunc = true
+			}
+			continue
+		}
+
+		// Inside function signature — look for opening brace.
+		if !pastOpen {
+			if strings.Contains(line, "{") {
+				pastOpen = true
+				depth = 1
+			}
+			continue
+		}
+
+		// Track brace depth to find end of function.
+		for _, ch := range line {
+			switch ch {
+			case '{':
+				depth++
+			case '}':
+				depth--
+			}
+		}
+		if depth <= 0 {
+			break // reached end of function
+		}
+
+		// Count as SLOC if not blank and not a pure comment line.
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+		sloc++
+	}
+	return sloc
+}
+
+// Test_RootCmd_ListsExactly8Leaves covers cobra-command-tree.REQ-01.1.
+// A "leaf" command is one with HasSubCommands() == false.
+// Expected leaves: init, execute, add, info, sync, validate, remove, skill update.
+func Test_RootCmd_ListsExactly8Leaves(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp: %v", err)
+	}
+
+	leaves := collectLeaves(app.Root)
+	wantLeaves := []string{"init", "execute", "add", "info", "sync", "validate", "remove", "update"}
+	if len(leaves) != 8 {
+		t.Errorf("got %d leaf commands, want 8; leaves: %v", len(leaves), leaves)
+	}
+
+	// Verify each expected leaf is present.
+	leaveSet := make(map[string]bool)
+	for _, l := range leaves {
+		leaveSet[l] = true
+	}
+	for _, want := range wantLeaves {
+		if !leaveSet[want] {
+			t.Errorf("missing expected leaf command %q", want)
+		}
+	}
+}
+
+// collectLeaves recursively walks the command tree and returns names of all
+// leaf commands (those with no sub-commands).
+func collectLeaves(cmd *cobra.Command) []string {
+	if !cmd.HasSubCommands() {
+		return []string{cmd.Name()}
+	}
+	var leaves []string
+	for _, sub := range cmd.Commands() {
+		leaves = append(leaves, collectLeaves(sub)...)
+	}
+	return leaves
+}
+
+// Test_GoMod_HasPinnedDeps covers dependencies.REQ-01.1.
+// Reads go.mod and verifies cobra v1.8.x, viper v1.19.x, charmbracelet/log v0.4.x.
+func Test_GoMod_HasPinnedDeps(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("../../go.mod")
+	if err != nil {
+		t.Fatalf("cannot read go.mod: %v", err)
+	}
+	content := string(src)
+
+	deps := []struct {
+		name    string
+		pattern string
+	}{
+		{"cobra v1.8.x", `github\.com/spf13/cobra v1\.8\.`},
+		{"viper v1.19.x", `github\.com/spf13/viper v1\.19\.`},
+		{"charmbracelet/log v0.4.x", `github\.com/charmbracelet/log v0\.4\.`},
+	}
+
+	for _, dep := range deps {
+		matched, err := regexp.MatchString(dep.pattern, content)
+		if err != nil {
+			t.Errorf("bad pattern for %s: %v", dep.name, err)
+			continue
+		}
+		if !matched {
+			t.Errorf("go.mod missing or wrong version for %s (pattern: %s)", dep.name, dep.pattern)
+		}
+	}
+}
