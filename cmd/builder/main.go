@@ -4,15 +4,13 @@
 // It wires all port interfaces — Engine, Renderer, and the Cobra command tree —
 // and returns a fully-initialised *App. No other file under internal/ imports
 // concrete adapter types.
-//
-// CONTRACT:STUB — wires FakeEngine + NoopRenderer during the skeleton phase.
-// Real adapters land at /plan #3 (renderer) and /plan #4 (engine).
 package main
 
 import (
 	"log/slog"
 	"os"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/add"
@@ -28,17 +26,15 @@ import (
 )
 
 // Config holds application-wide configuration.
-//
-// At the skeleton phase this is empty; fields will be added at /plan #3+
-// when Viper is wired for config-file and environment-variable loading.
-type Config struct{}
+type Config struct {
+	// OutputMode controls which renderer adapter is selected.
+	// Accepted values: "pretty", "json", "" (auto — resolved via TTY detection).
+	// Corresponds to the --output persistent flag on the root Cobra command.
+	OutputMode render.OutputMode
+}
 
 // validate checks the Config for obvious misconfiguration.
-// At the skeleton phase Config is empty so validate always returns nil;
-// when fields are added at /plan #3, this becomes the validation site.
 func (c Config) validate() error {
-	// Skeleton: no fields to validate.
-	// /plan #3: add workspace path, log level, and env-allowlist validation here.
 	_ = c
 	return nil
 }
@@ -63,17 +59,21 @@ type App struct {
 // This is the SOLE site in the codebase where concrete adapter types are
 // imported and instantiated (ADR-011). The function body ceiling is ≤120 SLOC
 // (composition-root.REQ-01.2, enforced by Test_ComposeApp_LOC_Within120).
-//
-// CONTRACT:STUB — FakeEngine and NoopRenderer are skeleton-phase stubs.
 func composeApp(cfg Config) (*App, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
-	// Concrete adapter construction — the only place in the codebase where
-	// FakeEngine and NoopRenderer are instantiated. Swap here at /plan #3 + #4.
+	// Engine adapter — FakeEngine until /plan #4.
 	eng := &engine.FakeEngine{}
-	ren := &render.NoopRenderer{}
+
+	// Renderer adapter — selected by factory based on --output flag + TTY.
+	// isTTY is injected here (production path); tests pass their own stub.
+	isTTY := func() bool { return isatty.IsTerminal(os.Stdout.Fd()) }
+	ren, renErr := render.NewRenderer(cfg.OutputMode, isTTY)
+	if renErr != nil {
+		return nil, renErr
+	}
 
 	// Cobra root command — metadata used by `builder --help`.
 	root := &cobra.Command{
@@ -84,14 +84,15 @@ maintaining software projects.
 
 Run 'builder --help' to see all available commands.
 Run 'builder <command> --help' for command-specific usage.`,
-		// SilenceErrors prevents Cobra from printing errors before main() does.
 		SilenceErrors: true,
-		// SilenceUsage prevents Cobra from printing usage on RunE errors.
-		SilenceUsage: true,
+		SilenceUsage:  true,
 	}
 
+	// --output persistent flag (REQ-14): propagated to all sub-commands.
+	// Default is "" (OutputModeAuto) — factory resolves via TTY detection.
+	root.PersistentFlags().String("output", "", `output format: "pretty" (human-readable) or "json" (NDJSON for CI/pipes). Default: auto-detect from terminal.`)
+
 	// Register all 8 leaf commands (cobra-command-tree.REQ-01.1).
-	// Order matches alphabetical --help listing; skill is last as it is a group.
 	root.AddCommand(initialise.NewCommand()) // init
 	root.AddCommand(execute.NewCommand())    // execute
 	root.AddCommand(add.NewCommand())        // add
@@ -109,7 +110,17 @@ Run 'builder <command> --help' for command-specific usage.`,
 }
 
 func main() {
-	app, err := composeApp(Config{})
+	// Extract --output flag value before calling composeApp.
+	// We use pflag directly on a temporary FlagSet so the factory receives
+	// the resolved mode at startup — before the full Cobra tree is constructed.
+	// This avoids a two-phase init or PersistentPreRunE indirection.
+	fs := cobra.Command{}
+	var outputFlag string
+	fs.PersistentFlags().StringVar(&outputFlag, "output", "", "")
+	// ParseErrorsWhitelist allows unknown flags (sub-command flags) to pass.
+	_ = fs.ParseFlags(os.Args[1:])
+
+	app, err := composeApp(Config{OutputMode: render.OutputMode(outputFlag)})
 	if err != nil {
 		slog.Error("failed to initialise application", "error", err)
 		os.Exit(1)
