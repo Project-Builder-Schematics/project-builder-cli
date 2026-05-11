@@ -1,0 +1,18 @@
+package badhandler
+
+import (
+	"fmt"
+
+	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+)
+
+// VIOLATION: uses %v in an errs.Error Message field, which can leak
+// structured data (wrapped error causes, stack traces, internal paths).
+// The fitness script (FF-09) negative-greps Message:.*%[v+] in handler files.
+func RunE(someErr error) error {
+	return &errs.Error{
+		Code:    errs.ErrCodeNotImplemented,
+		Op:      "bad.handler",
+		Message: fmt.Sprintf("operation failed: %v", someErr),
+	}
+}

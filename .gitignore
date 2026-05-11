@@ -30,6 +30,7 @@ go.work.sum
 # Build outputs
 bin/
 dist/
+/builder
 
 # graphify knowledge-graph artifacts (rebuilt by post-commit hook)
 graphify-out/

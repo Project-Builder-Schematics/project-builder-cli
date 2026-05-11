@@ -1,0 +1,12 @@
+package unguardedreply
+
+// VIOLATION: Reply channel send without proper cancellation guard.
+// The send on req.Reply below has no cancellation mechanism within 5 lines.
+
+func badHandler(req Request, value string) {
+	req.Reply <- value
+}
+
+type Request struct {
+	Reply chan<- string
+}

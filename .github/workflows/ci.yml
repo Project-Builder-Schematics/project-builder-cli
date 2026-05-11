@@ -23,7 +23,7 @@ jobs:
         with:
           go-version: '1.23'
 
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v7
         if: steps.detect.outputs.count != '0'
         with:
           version: v2.12.2
@@ -70,32 +70,6 @@ jobs:
           go-version: '1.23'
 
       - uses: extractions/setup-just@v2
-
-      - name: smoke (layout invariants)
-        run: |
-          set -euo pipefail
-          dirs=(
-            cmd/builder
-            internal/feature
-            internal/shared/services
-            internal/shared/discoverer
-            internal/shared/inputs
-            internal/shared/engine
-            internal/shared/render
-            internal/shared/events
-            internal/shared/errors
-            internal/shared/config
-            internal/shared/log
-          )
-          for d in "${dirs[@]}"; do
-            test -f "${d}/.gitkeep" || { echo "missing ${d}/.gitkeep"; exit 1; }
-          done
-          go_files=$(find cmd internal -name '*.go' 2>/dev/null | wc -l)
-          if [ "${go_files}" -ne 0 ]; then
-            echo "expected 0 *.go files under cmd/ or internal/, found ${go_files}"
-            exit 1
-          fi
-          echo "layout smoke: 11 placeholder dirs present, 0 *.go files"
 
       - name: architectural (linter bundle = 15 curated tools)
         run: |
@@ -145,3 +119,21 @@ jobs:
             exit 1
           fi
           echo "version-pin: all uses entries pinned to major version"
+
+  fitness:
+    needs: [lint, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - uses: extractions/setup-just@v2
+
+      - name: fitness (all 9 functions against real codebase)
+        run: just fitness
+
+      - name: fitness-meta (each function catches its bad-pattern fixture)
+        run: just fitness-meta
