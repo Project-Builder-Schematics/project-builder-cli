@@ -8,8 +8,16 @@
 //   - Records mcp_setup_offered op when MCP=yes (REQ-MCP-02)
 //   - Returns ErrCodeNotImplemented for non-dry-run (real writes land S-001..S-005)
 //
-// Real output writers (writeProjectBuilderJSON, writeSchematicsSkel, etc.)
-// replace the stub recordOp calls in S-001..S-005.
+// S-001 real-write additions:
+//   - Output 1: project-builder.json — writeProjectConfig (REQ-PJ-01..04, REQ-DV-04)
+//   - Output 2: schematics/.gitkeep — writeSchematicsSkel (REQ-SF-01..02)
+//   - Outputs 3..5 + install + MCP still return ErrCodeNotImplemented (S-002..S-005)
+//
+// Partial-write contract (Option A, S-001):
+//   Outputs 1 and 2 are written to disk before ErrCodeNotImplemented is returned
+//   for output 3. The error message names which slice is needed next and suggests
+//   --dry-run as the stable preview path. Users can re-run with --force after
+//   later slices land without data loss.
 package initialise
 
 import (
@@ -45,11 +53,35 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 	}
 
 	if !req.DryRun {
-		// S-000 guard: real-write paths land in S-001..S-005.
+		// --- Real-write path (partial, S-001) ---
+		//
+		// Outputs 1 and 2 are wired. Outputs 3..5 + install + MCP return
+		// ErrCodeNotImplemented until later slices land.
+		//
+		// Partial-write caveat: if the service returns an error after writing
+		// outputs 1 and 2, those files are already on disk. The user can re-run
+		// with --force after later slices are installed to complete the init.
+		// Use --dry-run to preview the full plan without any writes.
+
+		// Output 1: project-builder.json (REQ-PJ-01..04, REQ-DV-04).
+		if _, err := writeProjectConfig(s.fs, req); err != nil {
+			return InitResult{}, err
+		}
+
+		// Output 2: schematics/.gitkeep (REQ-SF-01..02).
+		if _, err := writeSchematicsSkel(s.fs, req); err != nil {
+			return InitResult{}, err
+		}
+
+		// Outputs 3..5 + install + MCP — not yet implemented (S-002..S-005).
 		return InitResult{}, &errs.Error{
 			Code:    errs.ErrCodeNotImplemented,
 			Op:      "init.handler",
-			Message: "real-write mode requires later slices (S-001..S-005); use --dry-run to preview",
+			Message: "real-write of SKILL.md requires slice S-002; use --dry-run to preview the full plan, or run later slices first",
+			Suggestions: []string{
+				"use --dry-run to preview all planned operations without writing files",
+				"project-builder.json and schematics/.gitkeep have been written; re-run with --force after S-002..S-005 land to complete init",
+			},
 		}
 	}
 

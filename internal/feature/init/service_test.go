@@ -11,8 +11,10 @@
 package initialise
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
@@ -230,6 +232,140 @@ func Test_Service_Init_DryRun_PlannedOps_AllStableOps(t *testing.T) {
 		if !stableOps[op.Op] {
 			t.Errorf("PlannedOps[%d].Op = %q is not in the stable enum (REQ-DR-02)", i, op.Op)
 		}
+	}
+}
+
+// --- S-001 real-write tests ---
+
+// Test_Service_Init_RealWrite_S001_WritesBothFiles verifies that in real-write
+// mode, Service.Init writes project-builder.json and schematics/.gitkeep with
+// the locked bytes, and then returns ErrCodeNotImplemented (since outputs
+// 3..5 + install + MCP are not yet wired — S-002..S-005 fill them in).
+//
+// REQ-PJ-01 (project-builder.json locked bytes via service path)
+// REQ-SF-01  (schematics/.gitkeep locked bytes via service path)
+// Option A partial-write contract: outputs 1 & 2 are written before error.
+func Test_Service_Init_RealWrite_S001_WritesBothFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, []byte{})
+
+	req := InitRequest{
+		Directory: dir,
+		DryRun:    false,
+		MCP:       MCPNo,
+	}
+
+	_, err := svc.Init(context.Background(), req)
+	// S-001: expect ErrCodeNotImplemented for the not-yet-wired outputs (3..5).
+	if err == nil {
+		t.Fatal("expected ErrCodeNotImplemented for outputs 3..5 in S-001; got nil")
+	}
+
+	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected ErrCodeNotImplemented for S-001 partial real-write; got: %v", err)
+	}
+
+	// Output 1: project-builder.json MUST have been written with locked bytes.
+	pbPath := filepath.Join(dir, "project-builder.json")
+	gotPB, readErr := ffs.ReadFile(pbPath)
+	if readErr != nil {
+		t.Fatalf("project-builder.json not written before error: %v", readErr)
+	}
+	if !bytes.Equal(gotPB, lockedProjectBuilderJSON) {
+		t.Errorf("project-builder.json bytes mismatch after partial S-001 write\ngot:\n%s\nwant:\n%s", gotPB, lockedProjectBuilderJSON)
+	}
+
+	// Output 2: schematics/.gitkeep MUST have been written with locked bytes.
+	gitkeepPath := filepath.Join(dir, schematicsFolderName, ".gitkeep")
+	gotGK, readErr := ffs.ReadFile(gitkeepPath)
+	if readErr != nil {
+		t.Fatalf("schematics/.gitkeep not written before error: %v", readErr)
+	}
+	if !bytes.Equal(gotGK, lockedGitkeepBytes) {
+		t.Errorf("schematics/.gitkeep bytes mismatch after partial S-001 write\ngot:\n%q\nwant:\n%q", gotGK, lockedGitkeepBytes)
+	}
+}
+
+// Test_Service_Init_RealWrite_PreexistingConfig_ReturnsErrInitConfigExists
+// verifies that when project-builder.json already exists and Force=false,
+// Service.Init returns ErrCodeInitConfigExists before writing anything.
+// REQ-DV-04.
+func Test_Service_Init_RealWrite_PreexistingConfig_ReturnsErrInitConfigExists(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	pbPath := filepath.Join(dir, "project-builder.json")
+	existingContent := []byte(`{"version":"existing"}`)
+	if err := ffs.WriteFile(pbPath, existingContent, 0o644); err != nil {
+		t.Fatalf("seed WriteFile: %v", err)
+	}
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, []byte{})
+
+	req := InitRequest{Directory: dir, DryRun: false, Force: false}
+	_, err := svc.Init(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected ErrCodeInitConfigExists, got nil")
+	}
+
+	sentinel := &errs.Error{Code: errs.ErrCodeInitConfigExists}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("errors.Is(err, ErrCodeInitConfigExists) = false; got: %v", err)
+	}
+
+	// File must not have been overwritten.
+	got, readErr := ffs.ReadFile(pbPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile after error: %v", readErr)
+	}
+	if !bytes.Equal(got, existingContent) {
+		t.Error("pre-existing config was overwritten despite no --force")
+	}
+}
+
+// Test_Service_Init_RealWrite_Force_OverwritesExistingConfig verifies that
+// when Force=true, an existing project-builder.json is overwritten.
+// REQ-EC-03.
+func Test_Service_Init_RealWrite_Force_OverwritesExistingConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	pbPath := filepath.Join(dir, "project-builder.json")
+	if err := ffs.WriteFile(pbPath, []byte(`{"version":"old"}`), 0o644); err != nil {
+		t.Fatalf("seed WriteFile: %v", err)
+	}
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, []byte{})
+
+	req := InitRequest{Directory: dir, DryRun: false, Force: true}
+	_, err := svc.Init(context.Background(), req)
+	// S-001 partial: still expect ErrCodeNotImplemented (outputs 3..5 stub).
+	if err == nil {
+		t.Fatal("expected ErrCodeNotImplemented for S-001 partial real-write; got nil")
+	}
+	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected ErrCodeNotImplemented; got: %v", err)
+	}
+
+	// project-builder.json must have been overwritten with locked bytes.
+	got, readErr := ffs.ReadFile(pbPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile: %v", readErr)
+	}
+	if !bytes.Equal(got, lockedProjectBuilderJSON) {
+		t.Errorf("project-builder.json after --force overwrite:\ngot:\n%s\nwant:\n%s", got, lockedProjectBuilderJSON)
 	}
 }
 
