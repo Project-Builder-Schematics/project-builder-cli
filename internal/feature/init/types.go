@@ -153,6 +153,16 @@ type FSWriter interface {
 	// exist or is not accessible.
 	Stat(path string) (os.FileInfo, error)
 
+	// Lstat returns file metadata for path without following symlinks.
+	// Use this to detect whether a path is itself a symlink (REQ-AR-05).
+	Lstat(path string) (os.FileInfo, error)
+
+	// EvalSymlinks returns the path with all symlinks resolved.
+	// Returns an error if any component of the path does not exist.
+	// Use this to verify the resolved target stays within the project
+	// directory (REQ-AR-05 symlink-safety check).
+	EvalSymlinks(path string) (string, error)
+
 	// ReadFile returns the contents of path, or an error.
 	ReadFile(path string) ([]byte, error)
 

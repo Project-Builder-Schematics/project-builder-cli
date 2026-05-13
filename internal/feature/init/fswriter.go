@@ -34,6 +34,16 @@ func (o *osFS) Stat(path string) (os.FileInfo, error) {
 	return os.Stat(path)
 }
 
+// Lstat delegates to os.Lstat (does not follow symlinks).
+func (o *osFS) Lstat(path string) (os.FileInfo, error) {
+	return os.Lstat(path)
+}
+
+// EvalSymlinks delegates to filepath.EvalSymlinks.
+func (o *osFS) EvalSymlinks(path string) (string, error) {
+	return filepath.EvalSymlinks(path)
+}
+
 // ReadFile delegates to os.ReadFile.
 func (o *osFS) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path)
@@ -123,6 +133,18 @@ func newDryRunFS() *dryRunFS { return &dryRunFS{} }
 // REQ-DR-01.
 func (d *dryRunFS) Stat(_ string) (os.FileInfo, error) {
 	return nil, &os.PathError{Op: "stat", Path: "", Err: os.ErrNotExist}
+}
+
+// Lstat always returns os.ErrNotExist in dry-run mode (no real filesystem
+// state available). Symlink checks are skipped in dry-run.
+func (d *dryRunFS) Lstat(path string) (os.FileInfo, error) {
+	return nil, &os.PathError{Op: "lstat", Path: path, Err: os.ErrNotExist}
+}
+
+// EvalSymlinks returns path unchanged in dry-run mode (no real filesystem).
+// Symlink safety checks are skipped in dry-run.
+func (d *dryRunFS) EvalSymlinks(path string) (string, error) {
+	return path, nil
 }
 
 // ReadFile returns os.ErrNotExist (dry-run has no on-disk state to read).

@@ -12,6 +12,11 @@
 //   - REQ-SA-02 (pre-existing SKILL.md without --force → warning in Warnings, no error)
 //   - REQ-SA-02 (pre-existing SKILL.md with --force → overwritten)
 //   - REQ-SA-03 (--no-skill → SKILL.md not written, outputs 4+SDK skipped)
+//   - REQ-AR-01 (real-write writes AGENTS.md marker with locked bytes)
+//   - REQ-AR-02 (pre-existing AGENTS.md with marker → idempotent; no duplication)
+//   - REQ-AR-04 (both files markered → ErrInitAgentFileAmbiguous unless --force)
+//   - REQ-SA-03 regression (--no-skill still skips outputs 3+4+SDK atomically)
+//   - REQ-DR-01 regression (dry-run still records append_marker for AGENTS.md)
 package initialise
 
 import (
@@ -185,15 +190,15 @@ func Test_Service_Init_Publishable_ReturnsErrInitNotImplemented(t *testing.T) {
 
 // Test_Service_Init_NonDryRun_ReturnsNotImplemented verifies that real-write
 // mode (DryRun=false) returns ErrCodeNotImplemented for the first un-wired
-// output stub. After S-002, this is output 4 (AGENTS marker, S-003).
+// output stub. After S-003, this is output 5 (package.json mutation, S-004).
 func Test_Service_Init_NonDryRun_ReturnsNotImplemented(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	ffs := newFakeFS()
 	pm := &fakePM{detectResult: PMNpm}
-	// Use non-empty skill bytes so output 3 (SKILL.md) succeeds and we reach
-	// the output 4 stub (S-003 territory).
+	// Use non-empty skill bytes so output 3 (SKILL.md) succeeds; output 4
+	// (AGENTS marker) is now also wired; stub fires for output 5 (S-004).
 	svc := NewService(ffs, pm, []byte("placeholder"))
 
 	req := InitRequest{
@@ -203,7 +208,7 @@ func Test_Service_Init_NonDryRun_ReturnsNotImplemented(t *testing.T) {
 
 	_, err := svc.Init(context.Background(), req)
 	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for un-wired output stub; got nil")
+		t.Fatal("expected ErrCodeNotImplemented for un-wired output 5 stub (S-004); got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
@@ -249,16 +254,15 @@ func Test_Service_Init_DryRun_PlannedOps_AllStableOps(t *testing.T) {
 
 // Test_Service_Init_RealWrite_S001_WritesBothFiles verifies that in real-write
 // mode, Service.Init writes project-builder.json and schematics/.gitkeep with
-// the locked bytes. After S-002, outputs 1, 2, and 3 (SKILL.md) are wired;
-// outputs 4..5 + install + MCP still return ErrCodeNotImplemented.
+// the locked bytes. After S-003, outputs 1, 2, 3 (SKILL.md) and 4 (AGENTS
+// marker) are wired; output 5 + install + MCP still return ErrCodeNotImplemented.
 //
-// This test uses empty skill bytes ([]byte{}) to isolate S-001 concerns and
-// ensures the locked project-builder.json and .gitkeep bytes are written.
-// The ErrCodeNotImplemented is now for output 4 (AGENTS marker stub, S-003).
+// This test uses non-empty skill bytes so output 3 (SKILL.md) succeeds and
+// we hit the output 5 stub (S-004). Output 4 (AGENTS marker) also succeeds.
 //
 // REQ-PJ-01 (project-builder.json locked bytes via service path)
 // REQ-SF-01  (schematics/.gitkeep locked bytes via service path)
-// Option A partial-write contract: outputs 1 & 2 are written before error.
+// Option A partial-write contract: outputs 1..4 are written before error.
 func Test_Service_Init_RealWrite_S001_WritesBothFiles(t *testing.T) {
 	t.Parallel()
 
@@ -274,14 +278,14 @@ func Test_Service_Init_RealWrite_S001_WritesBothFiles(t *testing.T) {
 	}
 
 	_, err := svc.Init(context.Background(), req)
-	// S-002: expect ErrCodeNotImplemented for the not-yet-wired output 4 (AGENTS marker).
+	// S-003: expect ErrCodeNotImplemented for the not-yet-wired output 5 (package.json, S-004).
 	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for output 4 (AGENTS, S-003); got nil")
+		t.Fatal("expected ErrCodeNotImplemented for output 5 (package.json, S-004); got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
 	if !errors.Is(err, sentinel) {
-		t.Errorf("expected ErrCodeNotImplemented for S-002 partial real-write; got: %v", err)
+		t.Errorf("expected ErrCodeNotImplemented for S-003 partial real-write; got: %v", err)
 	}
 
 	// Output 1: project-builder.json MUST have been written with locked bytes.
@@ -364,9 +368,9 @@ func Test_Service_Init_RealWrite_Force_OverwritesExistingConfig(t *testing.T) {
 
 	req := InitRequest{Directory: dir, DryRun: false, Force: true}
 	_, err := svc.Init(context.Background(), req)
-	// S-002 partial: ErrCodeNotImplemented for output 4 (AGENTS stub, S-003).
+	// S-003 partial: ErrCodeNotImplemented for output 5 (package.json stub, S-004).
 	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for S-002 partial real-write; got nil")
+		t.Fatal("expected ErrCodeNotImplemented for S-003 partial real-write; got nil")
 	}
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
 	if !errors.Is(err, sentinel) {
@@ -399,7 +403,7 @@ func Test_Service_Init_S002_RealWrite_WritesSkillMD(t *testing.T) {
 	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
 
 	_, err := svc.Init(context.Background(), req)
-	// After S-002, outputs 1+2+3 succeed. Output 4 (AGENTS) returns ErrCodeNotImplemented.
+	// After S-003, outputs 1+2+3+4 succeed. Output 5 (package.json) returns ErrCodeNotImplemented.
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
 	if err != nil && !errors.Is(err, sentinel) {
 		t.Fatalf("unexpected non-stub error: %v", err)
@@ -439,8 +443,8 @@ func Test_Service_Init_S002_PreexistingSkill_NoForce_WarningInResult(t *testing.
 	req := InitRequest{Directory: dir, DryRun: false, Force: false, MCP: MCPNo}
 	result, err := svc.Init(context.Background(), req)
 
-	// Hard error from ErrCodeNotImplemented (S-003 stub) is still acceptable —
-	// but ErrCodeInitSkillExists must NOT propagate as the hard error.
+	// Hard error from ErrCodeNotImplemented (S-004 stub for output 5) is still
+	// acceptable — but ErrCodeInitSkillExists must NOT propagate as the hard error.
 	if err != nil {
 		skillSentinel := &errs.Error{Code: errs.ErrCodeInitSkillExists}
 		if errors.Is(err, skillSentinel) {
@@ -481,7 +485,7 @@ func Test_Service_Init_S002_PreexistingSkill_Force_Overwrites(t *testing.T) {
 
 	req := InitRequest{Directory: dir, DryRun: false, Force: true, MCP: MCPNo}
 	_, err := svc.Init(context.Background(), req)
-	// ErrCodeNotImplemented for output 4 (S-003 stub) is acceptable.
+	// ErrCodeNotImplemented for output 5 (package.json, S-004 stub) is acceptable.
 	if err != nil {
 		sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
 		if !errors.Is(err, sentinel) {
@@ -513,12 +517,11 @@ func Test_Service_Init_S002_NoSkill_SkipsSkillMD(t *testing.T) {
 	req := InitRequest{Directory: dir, DryRun: false, NoSkill: true, MCP: MCPNo}
 	_, err := svc.Init(context.Background(), req)
 
-	// After S-002 with --no-skill: outputs 1+2 written, output 3 skipped entirely.
-	// Outputs 4+SDK are also skipped (NoSkill). The next un-wired stub is
-	// output 5 (package.json, S-004) — but since --no-skill also skips SDK
-	// dev-dep (output 5), the service jumps to the install stub (S-005) or
-	// returns ErrCodeNotImplemented for the next relevant operation.
-	// We don't assert specific error here; we assert SKILL.md was NOT written.
+	// After S-003 with --no-skill: outputs 1+2 written, outputs 3+4+SDK skipped
+	// atomically. The service returns nil (no stub, no further outputs in the
+	// --no-skill path). We don't assert specific error here; we assert SKILL.md
+	// was NOT written, and that the function succeeded (or returned only a
+	// valid stub error for a later slice — not expected after S-003).
 	_ = err
 
 	skillPath := filepath.Join(dir, ".claude", "skills", "pbuilder", "SKILL.md")
@@ -580,6 +583,165 @@ func Test_Service_Init_S002_DryRun_NoSkill_SKILL_AbsentFromPlannedOps(t *testing
 		}
 	}
 }
+
+// --- S-003 AGENTS.md/CLAUDE.md marker integration tests ---
+
+// Test_Service_Init_S003_RealWrite_WritesAgentsMarker verifies that when
+// neither AGENTS.md nor CLAUDE.md exists, Service.Init creates AGENTS.md
+// with the locked marker block (outputs 1+2+3+4 all land before the
+// ErrCodeNotImplemented stub for output 5). REQ-AR-01.
+func Test_Service_Init_S003_RealWrite_WritesAgentsMarker(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	// Output 5 (package.json) returns ErrCodeNotImplemented — that's expected.
+	if err != nil {
+		sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("unexpected non-stub error: %v", err)
+		}
+	}
+
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	got, readErr := ffs.ReadFile(agentsPath)
+	if readErr != nil {
+		t.Fatalf("AGENTS.md not written: %v", readErr)
+	}
+
+	if string(got) != agentMarkerBlock {
+		t.Errorf("AGENTS.md content mismatch\ngot:\n%q\nwant:\n%q", string(got), agentMarkerBlock)
+	}
+}
+
+// Test_Service_Init_S003_RealWrite_Idempotent_PreexistingMarker verifies that
+// when AGENTS.md already contains the locked marker (line-exact), Service.Init
+// does NOT append a second copy. REQ-AR-02.
+func Test_Service_Init_S003_RealWrite_Idempotent_PreexistingMarker(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	existingWithMarker := []byte("# Agents\n\n" + agentMarkerBlock)
+	if err := ffs.WriteFile(agentsPath, existingWithMarker, 0o644); err != nil {
+		t.Fatalf("seed AGENTS.md: %v", err)
+	}
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	if err != nil {
+		sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("unexpected non-stub error: %v", err)
+		}
+	}
+
+	got, _ := ffs.ReadFile(agentsPath)
+	// Content must be identical to original — no second marker appended.
+	if string(got) != string(existingWithMarker) {
+		t.Errorf("idempotent: AGENTS.md was modified on re-run (REQ-AR-02)\nbefore:\n%q\nafter:\n%q",
+			string(existingWithMarker), string(got))
+	}
+}
+
+// Test_Service_Init_S003_BothMarkered_ReturnsErrAmbiguous verifies that
+// when both AGENTS.md and CLAUDE.md already contain the marker and --force
+// is not set, Service.Init returns ErrCodeInitAgentFileAmbiguous. REQ-AR-04.
+func Test_Service_Init_S003_BothMarkered_ReturnsErrAmbiguous(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	withMarker := []byte("# Existing\n\n" + agentMarkerBlock)
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	_ = ffs.WriteFile(agentsPath, withMarker, 0o644)
+	_ = ffs.WriteFile(claudePath, withMarker, 0o644)
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, Force: false, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected ErrCodeInitAgentFileAmbiguous, got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) || e.Code != errs.ErrCodeInitAgentFileAmbiguous {
+		t.Errorf("expected ErrCodeInitAgentFileAmbiguous; got: %v", err)
+	}
+}
+
+// Test_Service_Init_S003_NoSkill_SkipsAgentsMarker_Regression verifies that
+// --no-skill still skips output 4 (AGENTS marker) atomically after S-003.
+// REQ-SA-03 regression.
+func Test_Service_Init_S003_NoSkill_SkipsAgentsMarker_Regression(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, NoSkill: true, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	// --no-skill path: outputs 1+2 written; outputs 3+4+SDK skipped; returns nil.
+	if err != nil {
+		t.Errorf("--no-skill should succeed after S-003; got: %v", err)
+	}
+
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if _, statErr := ffs.Stat(agentsPath); statErr == nil {
+		t.Errorf("AGENTS.md was created despite --no-skill (REQ-SA-03 regression)")
+	}
+
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	if _, statErr := ffs.Stat(claudePath); statErr == nil {
+		t.Errorf("CLAUDE.md was created despite --no-skill (REQ-SA-03 regression)")
+	}
+}
+
+// Test_Service_Init_S003_DryRun_HasAppendMarkerOp verifies that dry-run
+// records an append_marker op for AGENTS.md. REQ-AR-01, REQ-DR-01.
+func Test_Service_Init_S003_DryRun_HasAppendMarkerOp(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dfs := newDryRunFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(dfs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: true, NoSkill: false, MCP: MCPNo}
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	var found bool
+	for _, op := range result.PlannedOps {
+		if op.Op == "append_marker" && op.Path == agentsPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("PlannedOps does not contain append_marker for %q (REQ-AR-01 dry-run)", agentsPath)
+	}
+}
+
+// --- REQ-DR-02 regression after S-003 ---
 
 // Test_Service_Init_DryRun_WithMCP_HasSixOps verifies that with MCP=yes,
 // dry-run produces exactly 6 PlannedOps (5 outputs + mcp_setup_offered).

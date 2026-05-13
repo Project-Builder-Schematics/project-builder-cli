@@ -17,9 +17,13 @@
 //   - --no-skill skips output 3 entirely; outputs 4+SDK also skipped atomically
 //   - Outputs 4..5 + install + MCP still return ErrCodeNotImplemented (S-003..S-005)
 //
-// Partial-write contract (Option A, S-002):
-//   Outputs 1, 2, and 3 are written to disk before ErrCodeNotImplemented is
-//   returned for output 4. Users can re-run with --force after later slices
+// S-003 real-write additions:
+//   - Output 4: AGENTS.md/CLAUDE.md marker — appendAgentsMarker (REQ-AR-01..05)
+//   - Outputs 5 + install + MCP still return ErrCodeNotImplemented (S-004..S-005)
+//
+// Partial-write contract (Option A, S-003):
+//   Outputs 1, 2, 3, and 4 are written to disk before ErrCodeNotImplemented is
+//   returned for output 5. Users can re-run with --force after later slices
 //   land without data loss. Use --dry-run to preview the full plan.
 package initialise
 
@@ -57,9 +61,9 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 	}
 
 	if !req.DryRun {
-		// --- Real-write path (partial, S-002) ---
+		// --- Real-write path (partial, S-003) ---
 		//
-		// Outputs 1, 2, and 3 are wired. Outputs 4..5 + install + MCP return
+		// Outputs 1, 2, 3, and 4 are wired. Output 5 + install + MCP return
 		// ErrCodeNotImplemented until later slices land.
 		//
 		// Partial-write caveat: if the service returns an error after writing
@@ -104,24 +108,26 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 		// --no-skill skips outputs 3, 4, and the SDK dev-dep atomically (REQ-SA-03).
 		// When NoSkill=true, we jump past outputs 4+5 entirely.
 		if !req.NoSkill {
-			// Output 4: AGENTS.md/CLAUDE.md marker (REQ-AR-01..05) — S-003.
+			// Output 4: AGENTS.md/CLAUDE.md marker (REQ-AR-01..05).
+			_, agentErr := appendAgentsMarker(req.Directory, req.Force, s.fs)
+			if agentErr != nil {
+				return InitResult{}, agentErr
+			}
+
+			// Output 5: package.json @pbuilder/sdk dev-dep (REQ-PM-01..04) — S-004.
 			return result, &errs.Error{
 				Code:    errs.ErrCodeNotImplemented,
 				Op:      "init.handler",
-				Message: "real-write of AGENTS/CLAUDE marker requires slice S-003; use --dry-run to preview the full plan, or run later slices first",
+				Message: "real-write of package.json mutation requires slice S-004; use --dry-run to preview the full plan, or run later slices first",
 				Suggestions: []string{
 					"use --dry-run to preview all planned operations without writing files",
-					"outputs 1, 2, and 3 have been written; re-run with --force after S-003..S-005 land to complete init",
+					"outputs 1, 2, 3, and 4 have been written; re-run with --force after S-004..S-005 land to complete init",
 				},
 			}
 		}
 
 		// --no-skill path: outputs 4+5+install+MCP are all skipped.
 		// Outputs 1 and 2 were written above; output 3 was skipped.
-		// The next un-wired stub would be the install subprocess (S-005),
-		// but --no-install is implied when --no-skill is combined with the
-		// fact that no SDK dep is added. For now, return success (no more
-		// non-implemented stubs in the --no-skill path after S-002).
 		return result, nil
 	}
 
@@ -166,8 +172,11 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 		}
 
 		// Output 4: AGENTS.md marker (REQ-AR-01) — skip if --no-skill.
+		// In dry-run mode, record the append_marker op for AGENTS.md (default
+		// precedence). The real target selection (AGENTS vs CLAUDE) happens in
+		// the real-write path via appendAgentsMarker.
 		agentsPath := filepath.Join(req.Directory, "AGENTS.md")
-		if err := s.fs.AppendFile(agentsPath, []byte("\n<!-- pbuilder -->\n")); err != nil {
+		if err := s.fs.AppendFile(agentsPath, []byte(agentMarkerBlock)); err != nil {
 			return InitResult{}, err
 		}
 	}

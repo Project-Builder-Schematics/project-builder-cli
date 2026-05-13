@@ -22,28 +22,84 @@ type fakeFS struct {
 	files      map[string][]byte
 	ops        []PlannedOp
 	recordOnly bool // when true, record ops without updating in-memory files
+
+	// symlinks maps a path to its resolved absolute target (simulates symlinks).
+	// When EvalSymlinks(path) is called and path is in this map, the mapped
+	// value is returned. For Lstat, paths in symlinks report as symlinks.
+	symlinks map[string]string
 }
 
 // newFakeFS returns an empty fakeFS ready for use.
 func newFakeFS() *fakeFS {
-	return &fakeFS{files: make(map[string][]byte)}
+	return &fakeFS{
+		files:    make(map[string][]byte),
+		symlinks: make(map[string]string),
+	}
 }
 
 // newDryRunFakeFS returns a fakeFS in record-only mode, mimicking dryRunFS.
 func newDryRunFakeFS() *fakeFS {
-	return &fakeFS{files: make(map[string][]byte), recordOnly: true}
+	return &fakeFS{
+		files:    make(map[string][]byte),
+		symlinks: make(map[string]string),
+		recordOnly: true,
+	}
+}
+
+// addSymlink registers path as a symlink that resolves to target.
+// Use this in tests that exercise REQ-AR-05 symlink safety.
+func (f *fakeFS) addSymlink(path, target string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.symlinks[path] = target
 }
 
 // Stat returns FileInfo for path.
 // Returns os.ErrNotExist if the path is not present in the in-memory map.
+// For symlinked paths, Stat follows the link (returns info for the target).
 func (f *fakeFS) Stat(path string) (os.FileInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Follow symlink if present.
+	if target, ok := f.symlinks[path]; ok {
+		// Symlink exists; return info for the target (if the target is also in
+		// the in-memory map, use its size; otherwise size=0).
+		size := int64(len(f.files[target]))
+		return &fakeFI{name: path, size: size}, nil
+	}
 	data, ok := f.files[path]
 	if !ok {
 		return nil, &os.PathError{Op: "stat", Path: path, Err: os.ErrNotExist}
 	}
 	return &fakeFI{name: path, size: int64(len(data))}, nil
+}
+
+// Lstat returns FileInfo for path WITHOUT following symlinks.
+// If path is a registered symlink, it returns a symlinkFI (Mode includes ModeSymlink).
+// Returns os.ErrNotExist if path is neither a symlink nor a file.
+func (f *fakeFS) Lstat(path string) (os.FileInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.symlinks[path]; ok {
+		return &fakeFI{name: path, size: 0, isSymlink: true}, nil
+	}
+	data, ok := f.files[path]
+	if !ok {
+		return nil, &os.PathError{Op: "lstat", Path: path, Err: os.ErrNotExist}
+	}
+	return &fakeFI{name: path, size: int64(len(data))}, nil
+}
+
+// EvalSymlinks resolves any registered symlink for path.
+// If path is a known symlink, the registered target is returned.
+// Otherwise path itself is returned (no-op for regular files or non-existent paths).
+func (f *fakeFS) EvalSymlinks(path string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if target, ok := f.symlinks[path]; ok {
+		return target, nil
+	}
+	return path, nil
 }
 
 // ReadFile returns the bytes stored at path.
@@ -115,16 +171,22 @@ func (f *fakeFS) recordOp(op PlannedOp) {
 
 // fakeFI is a minimal os.FileInfo implementation for fakeFS.
 type fakeFI struct {
-	name string
-	size int64
+	name      string
+	size      int64
+	isSymlink bool
 }
 
-func (fi *fakeFI) Name() string      { return fi.name }
-func (fi *fakeFI) Size() int64       { return fi.size }
-func (fi *fakeFI) Mode() fs.FileMode { return 0o644 }
+func (fi *fakeFI) Name() string { return fi.name }
+func (fi *fakeFI) Size() int64  { return fi.size }
+func (fi *fakeFI) Mode() fs.FileMode {
+	if fi.isSymlink {
+		return fs.ModeSymlink | 0o644
+	}
+	return 0o644
+}
 func (fi *fakeFI) ModTime() time.Time { return time.Time{} }
-func (fi *fakeFI) IsDir() bool       { return false }
-func (fi *fakeFI) Sys() any          { return nil }
+func (fi *fakeFI) IsDir() bool        { return false }
+func (fi *fakeFI) Sys() any           { return nil }
 
 // --- fakePM: minimal PackageManagerRunner for tests ---
 
