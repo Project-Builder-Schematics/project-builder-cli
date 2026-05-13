@@ -7,7 +7,11 @@
 //   - REQ-EC-05 (write order: PJ → schematics → SKILL → AGENTS → pkg.json → install → MCP)
 //   - REQ-CS-05 (--publishable → ErrCodeInitNotImplemented)
 //   - REQ-MCP-02 (MCP=yes records mcp_setup_offered op in dry-run)
-//   - REQ-EC-03 (non-dry-run stub returns ErrCodeNotImplemented for S-000)
+//   - REQ-EC-03 (non-dry-run stub returns ErrCodeNotImplemented for S-000..S-001 guard)
+//   - REQ-SA-01 (real-write writes SKILL.md with locked bytes)
+//   - REQ-SA-02 (pre-existing SKILL.md without --force → warning in Warnings, no error)
+//   - REQ-SA-02 (pre-existing SKILL.md with --force → overwritten)
+//   - REQ-SA-03 (--no-skill → SKILL.md not written, outputs 4+SDK skipped)
 package initialise
 
 import (
@@ -18,6 +22,7 @@ import (
 	"testing"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init/template"
 )
 
 // newTestService constructs a Service with in-memory fakes suitable for unit tests.
@@ -179,26 +184,31 @@ func Test_Service_Init_Publishable_ReturnsErrInitNotImplemented(t *testing.T) {
 }
 
 // Test_Service_Init_NonDryRun_ReturnsNotImplemented verifies that real-write
-// mode (DryRun=false) returns ErrCodeNotImplemented in S-000.
-// This is the S-000 walking skeleton guard — real writes land in S-001..S-005.
+// mode (DryRun=false) returns ErrCodeNotImplemented for the first un-wired
+// output stub. After S-002, this is output 4 (AGENTS marker, S-003).
 func Test_Service_Init_NonDryRun_ReturnsNotImplemented(t *testing.T) {
 	t.Parallel()
 
-	svc, _, _ := newTestService()
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	// Use non-empty skill bytes so output 3 (SKILL.md) succeeds and we reach
+	// the output 4 stub (S-003 territory).
+	svc := NewService(ffs, pm, []byte("placeholder"))
 
 	req := InitRequest{
-		Directory: t.TempDir(),
+		Directory: dir,
 		DryRun:    false,
 	}
 
 	_, err := svc.Init(context.Background(), req)
 	if err == nil {
-		t.Fatal("expected error for non-dry-run in S-000, got nil")
+		t.Fatal("expected ErrCodeNotImplemented for un-wired output stub; got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
 	if !errors.Is(err, sentinel) {
-		t.Errorf("errors.Is(err, ErrCodeNotImplemented) = false for S-000 non-dry-run; got: %v", err)
+		t.Errorf("errors.Is(err, ErrCodeNotImplemented) = false; got: %v", err)
 	}
 }
 
@@ -239,8 +249,12 @@ func Test_Service_Init_DryRun_PlannedOps_AllStableOps(t *testing.T) {
 
 // Test_Service_Init_RealWrite_S001_WritesBothFiles verifies that in real-write
 // mode, Service.Init writes project-builder.json and schematics/.gitkeep with
-// the locked bytes, and then returns ErrCodeNotImplemented (since outputs
-// 3..5 + install + MCP are not yet wired — S-002..S-005 fill them in).
+// the locked bytes. After S-002, outputs 1, 2, and 3 (SKILL.md) are wired;
+// outputs 4..5 + install + MCP still return ErrCodeNotImplemented.
+//
+// This test uses empty skill bytes ([]byte{}) to isolate S-001 concerns and
+// ensures the locked project-builder.json and .gitkeep bytes are written.
+// The ErrCodeNotImplemented is now for output 4 (AGENTS marker stub, S-003).
 //
 // REQ-PJ-01 (project-builder.json locked bytes via service path)
 // REQ-SF-01  (schematics/.gitkeep locked bytes via service path)
@@ -251,7 +265,7 @@ func Test_Service_Init_RealWrite_S001_WritesBothFiles(t *testing.T) {
 	dir := t.TempDir()
 	ffs := newFakeFS()
 	pm := &fakePM{detectResult: PMNpm}
-	svc := NewService(ffs, pm, []byte{})
+	svc := NewService(ffs, pm, []byte("skill-placeholder"))
 
 	req := InitRequest{
 		Directory: dir,
@@ -260,14 +274,14 @@ func Test_Service_Init_RealWrite_S001_WritesBothFiles(t *testing.T) {
 	}
 
 	_, err := svc.Init(context.Background(), req)
-	// S-001: expect ErrCodeNotImplemented for the not-yet-wired outputs (3..5).
+	// S-002: expect ErrCodeNotImplemented for the not-yet-wired output 4 (AGENTS marker).
 	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for outputs 3..5 in S-001; got nil")
+		t.Fatal("expected ErrCodeNotImplemented for output 4 (AGENTS, S-003); got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
 	if !errors.Is(err, sentinel) {
-		t.Errorf("expected ErrCodeNotImplemented for S-001 partial real-write; got: %v", err)
+		t.Errorf("expected ErrCodeNotImplemented for S-002 partial real-write; got: %v", err)
 	}
 
 	// Output 1: project-builder.json MUST have been written with locked bytes.
@@ -346,13 +360,13 @@ func Test_Service_Init_RealWrite_Force_OverwritesExistingConfig(t *testing.T) {
 	}
 
 	pm := &fakePM{detectResult: PMNpm}
-	svc := NewService(ffs, pm, []byte{})
+	svc := NewService(ffs, pm, []byte("skill-placeholder"))
 
 	req := InitRequest{Directory: dir, DryRun: false, Force: true}
 	_, err := svc.Init(context.Background(), req)
-	// S-001 partial: still expect ErrCodeNotImplemented (outputs 3..5 stub).
+	// S-002 partial: ErrCodeNotImplemented for output 4 (AGENTS stub, S-003).
 	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for S-001 partial real-write; got nil")
+		t.Fatal("expected ErrCodeNotImplemented for S-002 partial real-write; got nil")
 	}
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
 	if !errors.Is(err, sentinel) {
@@ -366,6 +380,204 @@ func Test_Service_Init_RealWrite_Force_OverwritesExistingConfig(t *testing.T) {
 	}
 	if !bytes.Equal(got, lockedProjectBuilderJSON) {
 		t.Errorf("project-builder.json after --force overwrite:\ngot:\n%s\nwant:\n%s", got, lockedProjectBuilderJSON)
+	}
+}
+
+// --- S-002 SKILL.md real-write integration tests ---
+
+// Test_Service_Init_S002_RealWrite_WritesSkillMD verifies that Service.Init
+// writes .claude/skills/pbuilder/SKILL.md with the locked template bytes.
+// REQ-SA-01.
+func Test_Service_Init_S002_RealWrite_WritesSkillMD(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+
+	_, err := svc.Init(context.Background(), req)
+	// After S-002, outputs 1+2+3 succeed. Output 4 (AGENTS) returns ErrCodeNotImplemented.
+	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+	if err != nil && !errors.Is(err, sentinel) {
+		t.Fatalf("unexpected non-stub error: %v", err)
+	}
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "pbuilder", "SKILL.md")
+	got, readErr := ffs.ReadFile(skillPath)
+	if readErr != nil {
+		t.Fatalf("SKILL.md not written: %v", readErr)
+	}
+	if !bytes.Equal(got, template.Skill) {
+		t.Errorf("SKILL.md bytes mismatch:\ngot  len=%d\nwant len=%d", len(got), len(template.Skill))
+	}
+}
+
+// Test_Service_Init_S002_PreexistingSkill_NoForce_WarningInResult verifies
+// that when SKILL.md already exists without --force, the service:
+//   - does NOT return a hard error
+//   - populates InitResult.Warnings with a non-empty message
+//
+// REQ-SA-02.
+func Test_Service_Init_S002_PreexistingSkill_NoForce_WarningInResult(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "pbuilder", "SKILL.md")
+	existing := []byte("old skill content")
+	if err := ffs.WriteFile(skillPath, existing, 0o644); err != nil {
+		t.Fatalf("seed SKILL.md: %v", err)
+	}
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, Force: false, MCP: MCPNo}
+	result, err := svc.Init(context.Background(), req)
+
+	// Hard error from ErrCodeNotImplemented (S-003 stub) is still acceptable —
+	// but ErrCodeInitSkillExists must NOT propagate as the hard error.
+	if err != nil {
+		skillSentinel := &errs.Error{Code: errs.ErrCodeInitSkillExists}
+		if errors.Is(err, skillSentinel) {
+			t.Errorf("ErrCodeInitSkillExists must not propagate as hard error (REQ-SA-02 — skip is not a failure)")
+		}
+	}
+
+	// SKILL.md must remain untouched.
+	got, readErr := ffs.ReadFile(skillPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile after skip: %v", readErr)
+	}
+	if !bytes.Equal(got, existing) {
+		t.Error("SKILL.md was overwritten despite Force=false (REQ-SA-02)")
+	}
+
+	// Warnings must be non-empty (skip is recorded as a warning).
+	if len(result.Warnings) == 0 {
+		t.Errorf("InitResult.Warnings is empty; expected SKILL.md skip warning (REQ-SA-02)")
+	}
+}
+
+// Test_Service_Init_S002_PreexistingSkill_Force_Overwrites verifies that
+// with Force=true, an existing SKILL.md is overwritten. REQ-SA-02.
+func Test_Service_Init_S002_PreexistingSkill_Force_Overwrites(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "pbuilder", "SKILL.md")
+	if err := ffs.WriteFile(skillPath, []byte("old"), 0o644); err != nil {
+		t.Fatalf("seed SKILL.md: %v", err)
+	}
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, Force: true, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	// ErrCodeNotImplemented for output 4 (S-003 stub) is acceptable.
+	if err != nil {
+		sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("unexpected non-stub error: %v", err)
+		}
+	}
+
+	got, readErr := ffs.ReadFile(skillPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile: %v", readErr)
+	}
+	if !bytes.Equal(got, template.Skill) {
+		t.Errorf("SKILL.md not overwritten with locked bytes after --force")
+	}
+}
+
+// Test_Service_Init_S002_NoSkill_SkipsSkillMD verifies that when --no-skill is
+// set, Service.Init does NOT write SKILL.md and does NOT hit the output 4
+// stub (AGENTS marker). The service must succeed for outputs 1+2, skip 3+4+SDK,
+// and then return nil or ErrCodeNotImplemented for a later stub. REQ-SA-03.
+func Test_Service_Init_S002_NoSkill_SkipsSkillMD(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, NoSkill: true, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+
+	// After S-002 with --no-skill: outputs 1+2 written, output 3 skipped entirely.
+	// Outputs 4+SDK are also skipped (NoSkill). The next un-wired stub is
+	// output 5 (package.json, S-004) — but since --no-skill also skips SDK
+	// dev-dep (output 5), the service jumps to the install stub (S-005) or
+	// returns ErrCodeNotImplemented for the next relevant operation.
+	// We don't assert specific error here; we assert SKILL.md was NOT written.
+	_ = err
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "pbuilder", "SKILL.md")
+	if _, statErr := ffs.Stat(skillPath); statErr == nil {
+		t.Errorf("SKILL.md was written despite --no-skill (REQ-SA-03)")
+	}
+}
+
+// Test_Service_Init_S002_DryRun_SKILL_InPlannedOps verifies that dry-run
+// records create_file for .claude/skills/pbuilder/SKILL.md when --no-skill
+// is false. REQ-DR-01, REQ-SA-01.
+func Test_Service_Init_S002_DryRun_SKILL_InPlannedOps(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dfs := newDryRunFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(dfs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: true, NoSkill: false, MCP: MCPNo}
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "pbuilder", "SKILL.md")
+	var found bool
+	for _, op := range result.PlannedOps {
+		if op.Op == "create_file" && op.Path == skillPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("PlannedOps does not contain create_file for %q (REQ-SA-01 dry-run)", skillPath)
+	}
+}
+
+// Test_Service_Init_S002_DryRun_NoSkill_SKILL_AbsentFromPlannedOps verifies
+// that dry-run with --no-skill does NOT record create_file for SKILL.md.
+// REQ-SA-03.
+func Test_Service_Init_S002_DryRun_NoSkill_SKILL_AbsentFromPlannedOps(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dfs := newDryRunFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(dfs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: true, NoSkill: true, MCP: MCPNo}
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	skillPath := filepath.Join(dir, ".claude", "skills", "pbuilder", "SKILL.md")
+	for _, op := range result.PlannedOps {
+		if op.Op == "create_file" && op.Path == skillPath {
+			t.Errorf("PlannedOps contains create_file for SKILL.md but --no-skill was set (REQ-SA-03)")
+		}
 	}
 }
 

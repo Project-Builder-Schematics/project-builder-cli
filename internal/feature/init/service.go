@@ -11,17 +11,21 @@
 // S-001 real-write additions:
 //   - Output 1: project-builder.json — writeProjectConfig (REQ-PJ-01..04, REQ-DV-04)
 //   - Output 2: schematics/.gitkeep — writeSchematicsSkel (REQ-SF-01..02)
-//   - Outputs 3..5 + install + MCP still return ErrCodeNotImplemented (S-002..S-005)
 //
-// Partial-write contract (Option A, S-001):
-//   Outputs 1 and 2 are written to disk before ErrCodeNotImplemented is returned
-//   for output 3. The error message names which slice is needed next and suggests
-//   --dry-run as the stable preview path. Users can re-run with --force after
-//   later slices land without data loss.
+// S-002 real-write additions:
+//   - Output 3: SKILL.md — writeSkillArtefact (REQ-SA-01..03)
+//   - --no-skill skips output 3 entirely; outputs 4+SDK also skipped atomically
+//   - Outputs 4..5 + install + MCP still return ErrCodeNotImplemented (S-003..S-005)
+//
+// Partial-write contract (Option A, S-002):
+//   Outputs 1, 2, and 3 are written to disk before ErrCodeNotImplemented is
+//   returned for output 4. Users can re-run with --force after later slices
+//   land without data loss. Use --dry-run to preview the full plan.
 package initialise
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
@@ -53,15 +57,18 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 	}
 
 	if !req.DryRun {
-		// --- Real-write path (partial, S-001) ---
+		// --- Real-write path (partial, S-002) ---
 		//
-		// Outputs 1 and 2 are wired. Outputs 3..5 + install + MCP return
+		// Outputs 1, 2, and 3 are wired. Outputs 4..5 + install + MCP return
 		// ErrCodeNotImplemented until later slices land.
 		//
 		// Partial-write caveat: if the service returns an error after writing
-		// outputs 1 and 2, those files are already on disk. The user can re-run
+		// earlier outputs, those files are already on disk. The user can re-run
 		// with --force after later slices are installed to complete the init.
 		// Use --dry-run to preview the full plan without any writes.
+
+		var result InitResult
+		result.Directory = req.Directory
 
 		// Output 1: project-builder.json (REQ-PJ-01..04, REQ-DV-04).
 		if _, err := writeProjectConfig(s.fs, req); err != nil {
@@ -73,16 +80,49 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 			return InitResult{}, err
 		}
 
-		// Outputs 3..5 + install + MCP — not yet implemented (S-002..S-005).
-		return InitResult{}, &errs.Error{
-			Code:    errs.ErrCodeNotImplemented,
-			Op:      "init.handler",
-			Message: "real-write of SKILL.md requires slice S-002; use --dry-run to preview the full plan, or run later slices first",
-			Suggestions: []string{
-				"use --dry-run to preview all planned operations without writing files",
-				"project-builder.json and schematics/.gitkeep have been written; re-run with --force after S-002..S-005 land to complete init",
-			},
+		// Output 3: SKILL.md (REQ-SA-01..03) — skip if --no-skill.
+		if !req.NoSkill {
+			skillPath, skillErr := writeSkillArtefact(s.fs, req, s.skill)
+			if skillErr != nil {
+				// ErrCodeInitSkillExists means the file was pre-existing and Force=false.
+				// Per REQ-SA-02, this is a WARNING not a failure: record it and continue.
+				skipSentinel := &errs.Error{Code: errs.ErrCodeInitSkillExists}
+				if errors.Is(skillErr, skipSentinel) {
+					var e *errs.Error
+					if errors.As(skillErr, &e) {
+						result.Warnings = append(result.Warnings, e.Message)
+					}
+					// skillPath is still set to the existing file path — record it.
+					_ = skillPath
+				} else {
+					// Any other error is fatal.
+					return InitResult{}, skillErr
+				}
+			}
 		}
+
+		// --no-skill skips outputs 3, 4, and the SDK dev-dep atomically (REQ-SA-03).
+		// When NoSkill=true, we jump past outputs 4+5 entirely.
+		if !req.NoSkill {
+			// Output 4: AGENTS.md/CLAUDE.md marker (REQ-AR-01..05) — S-003.
+			return result, &errs.Error{
+				Code:    errs.ErrCodeNotImplemented,
+				Op:      "init.handler",
+				Message: "real-write of AGENTS/CLAUDE marker requires slice S-003; use --dry-run to preview the full plan, or run later slices first",
+				Suggestions: []string{
+					"use --dry-run to preview all planned operations without writing files",
+					"outputs 1, 2, and 3 have been written; re-run with --force after S-003..S-005 land to complete init",
+				},
+			}
+		}
+
+		// --no-skill path: outputs 4+5+install+MCP are all skipped.
+		// Outputs 1 and 2 were written above; output 3 was skipped.
+		// The next un-wired stub would be the install subprocess (S-005),
+		// but --no-install is implied when --no-skill is combined with the
+		// fact that no SDK dep is added. For now, return success (no more
+		// non-implemented stubs in the --no-skill path after S-002).
+		return result, nil
 	}
 
 	// --- Dry-run path ---

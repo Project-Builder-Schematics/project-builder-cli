@@ -19,6 +19,7 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/execute"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/info"
 	initialise "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init"
+	inittemplate "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init/template"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/remove"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/skill"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/sync"
@@ -98,10 +99,10 @@ Run 'builder <command> --help' for command-specific usage.`,
 	// Init feature wiring (REQ-FW-03, ADR-020).
 	// initFS is osFS (real writes); in dry-run mode the handler swaps to dryRunFS.
 	// initPM is the PackageManagerRunner stub (real impl lands in S-005).
-	// skill bytes are empty for S-000; the embedded SKILL.md lands in S-002.
+	// inittemplate.Skill holds the locked v0 SKILL.md bytes bundled via //go:embed (ADR-022, S-002).
 	initFS := initialise.NewOSWriter()
 	initPM := initialise.NewRealPM()
-	initSvc := initialise.NewService(initFS, initPM, []byte{})
+	initSvc := initialise.NewService(initFS, initPM, inittemplate.Skill)
 
 	// Register all 8 leaf commands (cobra-command-tree.REQ-01.1).
 	root.AddCommand(initialise.NewCommand(initSvc)) // init
