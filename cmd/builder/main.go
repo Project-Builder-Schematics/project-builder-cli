@@ -95,8 +95,16 @@ Run 'builder <command> --help' for command-specific usage.`,
 	// Default is "" (OutputModeAuto) — factory resolves via TTY detection.
 	root.PersistentFlags().String("output", "", `output format: "pretty" (human-readable) or "json" (NDJSON for CI/pipes). Default: auto-detect from terminal.`)
 
+	// Init feature wiring (REQ-FW-03, ADR-020).
+	// initFS is osFS (real writes); in dry-run mode the handler swaps to dryRunFS.
+	// initPM is the PackageManagerRunner stub (real impl lands in S-005).
+	// skill bytes are empty for S-000; the embedded SKILL.md lands in S-002.
+	initFS := initialise.NewOSWriter()
+	initPM := initialise.NewRealPM()
+	initSvc := initialise.NewService(initFS, initPM, []byte{})
+
 	// Register all 8 leaf commands (cobra-command-tree.REQ-01.1).
-	root.AddCommand(initialise.NewCommand()) // init
+	root.AddCommand(initialise.NewCommand(initSvc)) // init
 	root.AddCommand(execute.NewCommand())    // execute
 	root.AddCommand(add.NewCommand())        // add
 	root.AddCommand(info.NewCommand())       // info

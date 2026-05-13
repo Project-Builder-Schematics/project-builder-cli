@@ -1,18 +1,21 @@
 // Package main_test (handlers_smoke_test.go) covers inert-stub-contract and
-// cobra-command-tree REQs via a table-driven smoke test over all 8 handlers.
+// cobra-command-tree REQs via a table-driven smoke test over the remaining stub handlers.
 //
 // Tests:
-//   - inert-stub-contract.REQ-01.1 — every handler returns *errors.Error with ErrCodeNotImplemented
+//   - inert-stub-contract.REQ-01.1 — every remaining stub handler returns *errors.Error with ErrCodeNotImplemented
 //   - inert-stub-contract.REQ-01.2 — every handler's Op matches the OpRegex pattern
 //   - cobra-command-tree.REQ-02.1 — `skill` parent command with no args exits 0
 //   - structured-error.REQ-01.3 — Op format is "^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$"
 //
-// CONTRACT:STUB — all handlers return ErrCodeNotImplemented at the skeleton phase.
-// Real handler implementations land at /plan #5+.
+// Note: the `init` handler row was removed from this smoke test.
+// It was asserting ErrCodeNotImplemented for the stub. Now that `builder init`
+// has a real handler (S-000 walking skeleton), its behaviour is covered by
+// internal/feature/init/handler_test.go. (REQ-EC-03)
 package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"testing"
@@ -24,7 +27,6 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/add"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/execute"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/info"
-	initialise "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/remove"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/skill"
 	skillupdate "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/skill/update"
@@ -39,10 +41,11 @@ type handlerRow struct {
 	wantOp string
 }
 
-// handlerRows lists all 8 leaf handler RunE functions with their expected Op values.
+// handlerRows lists the 7 remaining stub handler RunE functions with their
+// expected Op values. The `init` row is omitted — it now has a real handler
+// covered by internal/feature/init/handler_test.go.
 // inert-stub-contract.REQ-01.1 + .REQ-01.2 + structured-error.REQ-01.3.
 var handlerRows = []handlerRow{
-	{name: "init", runE: initialise.RunE, wantOp: "init.handler"},
 	{name: "execute", runE: execute.RunE, wantOp: "execute.handler"},
 	{name: "add", runE: add.RunE, wantOp: "add.handler"},
 	{name: "info", runE: info.RunE, wantOp: "info.handler"},
@@ -134,6 +137,77 @@ func Test_Skill_NoArgs_ExitsZero(t *testing.T) {
 	execErr := app.Root.Execute()
 	if execErr != nil {
 		t.Errorf("skill --help returned error: %v (cobra-command-tree.REQ-02.1)", execErr)
+	}
+}
+
+// Test_Init_DryRun_JSON_EndToEnd covers the S-000 walking skeleton acceptance criterion:
+// builder init --dry-run --json --mcp=yes <dir> → valid JSON envelope with
+// mcp_setup_offered:true and 6 planned_ops.
+// REQ-JO-03, REQ-DR-01, REQ-MCP-03.
+func Test_Init_DryRun_JSON_EndToEnd(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp: %v", err)
+	}
+
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	app.Root.SetOut(&buf)
+	app.Root.SetErr(&buf)
+	app.Root.SetArgs([]string{"init", "--dry-run", "--json", "--mcp=yes", dir})
+
+	if execErr := app.Root.Execute(); execErr != nil {
+		t.Fatalf("init --dry-run --json --mcp=yes: %v — stderr: %s", execErr, buf.String())
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &result); err != nil {
+		t.Fatalf("json.Unmarshal: %v — raw output: %s", err, buf.String())
+	}
+
+	if result["directory"] != dir {
+		t.Errorf("directory = %v, want %q", result["directory"], dir)
+	}
+	if dryRun, _ := result["dry_run"].(bool); !dryRun {
+		t.Errorf("dry_run = %v, want true", result["dry_run"])
+	}
+	if mcp, _ := result["mcp_setup_offered"].(bool); !mcp {
+		t.Errorf("mcp_setup_offered = %v, want true (REQ-MCP-03)", result["mcp_setup_offered"])
+	}
+	ops, ok := result["planned_ops"].([]any)
+	if !ok {
+		t.Fatalf("planned_ops is not an array; got: %s", buf.String())
+	}
+	if len(ops) != 6 {
+		t.Errorf("planned_ops count = %d, want 6 (5 outputs + mcp_setup_offered) (REQ-DR-02)", len(ops))
+	}
+}
+
+// Test_Init_Publishable_ReturnsInitNotImplemented verifies the smoke-level
+// behaviour of --publishable via the real Cobra command tree.
+// REQ-CS-05, REQ-EC-03.
+func Test_Init_Publishable_ReturnsInitNotImplemented(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp: %v", err)
+	}
+
+	var buf bytes.Buffer
+	app.Root.SetOut(&buf)
+	app.Root.SetErr(&buf)
+	app.Root.SetArgs([]string{"init", "--dry-run", "--publishable", t.TempDir()})
+
+	execErr := app.Root.Execute()
+	if execErr == nil {
+		t.Fatal("init --publishable: expected error, got nil (REQ-CS-05)")
+	}
+
+	if !errors.Is(execErr, &errs.Error{Code: errs.ErrCodeInitNotImplemented}) {
+		t.Errorf("errors.Is(ErrCodeInitNotImplemented) = false; got: %v", execErr)
 	}
 }
 
