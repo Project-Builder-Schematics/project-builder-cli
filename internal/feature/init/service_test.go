@@ -17,6 +17,10 @@
 //   - REQ-AR-04 (both files markered → ErrInitAgentFileAmbiguous unless --force)
 //   - REQ-SA-03 regression (--no-skill still skips outputs 3+4+SDK atomically)
 //   - REQ-DR-01 regression (dry-run still records append_marker for AGENTS.md)
+//   - REQ-PM-01 (real-write writes package.json with @pbuilder/sdk dev-dep)
+//   - REQ-PM-02 (additive only — pre-existing deps preserved; malformed JSON → ErrCodeInvalidInput)
+//   - REQ-SA-03 regression (--no-skill skips package.json)
+//   - REQ-DR-01 regression (dry-run still records modify_devdep for package.json)
 package initialise
 
 import (
@@ -24,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
@@ -190,15 +195,14 @@ func Test_Service_Init_Publishable_ReturnsErrInitNotImplemented(t *testing.T) {
 
 // Test_Service_Init_NonDryRun_ReturnsNotImplemented verifies that real-write
 // mode (DryRun=false) returns ErrCodeNotImplemented for the first un-wired
-// output stub. After S-003, this is output 5 (package.json mutation, S-004).
+// output stub. After S-004, this is the install subprocess (S-005).
 func Test_Service_Init_NonDryRun_ReturnsNotImplemented(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	ffs := newFakeFS()
 	pm := &fakePM{detectResult: PMNpm}
-	// Use non-empty skill bytes so output 3 (SKILL.md) succeeds; output 4
-	// (AGENTS marker) is now also wired; stub fires for output 5 (S-004).
+	// Use non-empty skill bytes so outputs 3+4+5 succeed; stub fires for install (S-005).
 	svc := NewService(ffs, pm, []byte("placeholder"))
 
 	req := InitRequest{
@@ -208,7 +212,7 @@ func Test_Service_Init_NonDryRun_ReturnsNotImplemented(t *testing.T) {
 
 	_, err := svc.Init(context.Background(), req)
 	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for un-wired output 5 stub (S-004); got nil")
+		t.Fatal("expected ErrCodeNotImplemented for un-wired install stub (S-005); got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
@@ -738,6 +742,176 @@ func Test_Service_Init_S003_DryRun_HasAppendMarkerOp(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("PlannedOps does not contain append_marker for %q (REQ-AR-01 dry-run)", agentsPath)
+	}
+}
+
+// --- S-004 package.json mutation integration tests ---
+
+// Test_Service_Init_S004_RealWrite_WritesPackageJSON verifies that real-write
+// mode writes package.json with the @pbuilder/sdk dev-dep. The service returns
+// ErrCodeNotImplemented for the install subprocess (S-005 stub), but
+// package.json must be written before that error is returned. REQ-PM-01.
+func Test_Service_Init_S004_RealWrite_WritesPackageJSON(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	// After S-004, outputs 1+2+3+4+5 succeed. Install subprocess returns
+	// ErrCodeNotImplemented (S-005 stub).
+	if err != nil {
+		sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("unexpected non-stub error: %v", err)
+		}
+	}
+
+	pkgPath := filepath.Join(dir, "package.json")
+	got, readErr := ffs.ReadFile(pkgPath)
+	if readErr != nil {
+		t.Fatalf("package.json not written: %v", readErr)
+	}
+	content := string(got)
+	if !strings.Contains(content, `"@pbuilder/sdk": "^1.0.0"`) {
+		t.Errorf("package.json missing @pbuilder/sdk devDependency\ngot:\n%s", content)
+	}
+}
+
+// Test_Service_Init_S004_RealWrite_PreexistingPackageJSON_PreservesExistingDeps
+// verifies that when package.json already exists with other deps, the service
+// preserves them and adds @pbuilder/sdk. REQ-PM-02 (additive only).
+func Test_Service_Init_S004_RealWrite_PreexistingPackageJSON_PreservesExistingDeps(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	pkgPath := filepath.Join(dir, "package.json")
+	existing := []byte(`{"name":"my-project","devDependencies":{"typescript":"^5.0.0"}}`)
+	if err := ffs.WriteFile(pkgPath, existing, 0o644); err != nil {
+		t.Fatalf("seed package.json: %v", err)
+	}
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	if err != nil {
+		sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("unexpected non-stub error: %v", err)
+		}
+	}
+
+	got, _ := ffs.ReadFile(pkgPath)
+	content := string(got)
+
+	if !strings.Contains(content, `"@pbuilder/sdk": "^1.0.0"`) {
+		t.Errorf("package.json missing @pbuilder/sdk\ngot:\n%s", content)
+	}
+	if !strings.Contains(content, `"typescript": "^5.0.0"`) {
+		t.Errorf("package.json lost pre-existing typescript dep\ngot:\n%s", content)
+	}
+}
+
+// Test_Service_Init_S004_RealWrite_MalformedPackageJSON_ReturnsErrCodeInvalidInput
+// verifies that a malformed package.json causes ErrCodeInvalidInput and no
+// other outputs are affected (the error is returned before any more writes).
+// REQ-PM-02.
+func Test_Service_Init_S004_RealWrite_MalformedPackageJSON_ReturnsErrCodeInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+
+	pkgPath := filepath.Join(dir, "package.json")
+	malformed := []byte(`{name: "no-quotes"}`)
+	if err := ffs.WriteFile(pkgPath, malformed, 0o644); err != nil {
+		t.Fatalf("seed package.json: %v", err)
+	}
+
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for malformed package.json; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) || e.Code != errs.ErrCodeInvalidInput {
+		t.Errorf("expected ErrCodeInvalidInput; got: %v", err)
+	}
+
+	// package.json must remain unmodified.
+	got, readErr := ffs.ReadFile(pkgPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile after malformed error: %v", readErr)
+	}
+	if string(got) != string(malformed) {
+		t.Errorf("malformed package.json was modified; want unchanged")
+	}
+}
+
+// Test_Service_Init_S004_NoSkill_SkipsPackageJSON_Regression verifies that
+// --no-skill still skips package.json atomically with outputs 3+4 after S-004.
+// REQ-SA-03 regression.
+func Test_Service_Init_S004_NoSkill_SkipsPackageJSON_Regression(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, NoSkill: true, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	// --no-skill path: outputs 1+2 written; 3+4+SDK skipped; returns nil.
+	if err != nil {
+		t.Errorf("--no-skill should succeed after S-004; got: %v", err)
+	}
+
+	pkgPath := filepath.Join(dir, "package.json")
+	if _, statErr := ffs.Stat(pkgPath); statErr == nil {
+		t.Errorf("package.json was written despite --no-skill (REQ-SA-03 regression)")
+	}
+}
+
+// Test_Service_Init_S004_DryRun_ModifyDevDepOp_Regression verifies that dry-run
+// still records a modify_devdep PlannedOp for package.json. REQ-DR-01, REQ-PM-01.
+func Test_Service_Init_S004_DryRun_ModifyDevDepOp_Regression(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dfs := newDryRunFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(dfs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: true, NoSkill: false, MCP: MCPNo}
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	pkgPath := filepath.Join(dir, "package.json")
+	var found bool
+	for _, op := range result.PlannedOps {
+		if op.Op == "modify_devdep" && op.Path == pkgPath {
+			found = true
+			// Details must mention the package.
+			if !strings.Contains(op.Details, "@pbuilder/sdk") {
+				t.Errorf("modify_devdep Details missing @pbuilder/sdk: %q", op.Details)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("PlannedOps does not contain modify_devdep for %q (REQ-PM-01 dry-run)", pkgPath)
 	}
 }
 

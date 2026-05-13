@@ -21,10 +21,14 @@
 //   - Output 4: AGENTS.md/CLAUDE.md marker — appendAgentsMarker (REQ-AR-01..05)
 //   - Outputs 5 + install + MCP still return ErrCodeNotImplemented (S-004..S-005)
 //
-// Partial-write contract (Option A, S-003):
-//   Outputs 1, 2, 3, and 4 are written to disk before ErrCodeNotImplemented is
-//   returned for output 5. Users can re-run with --force after later slices
-//   land without data loss. Use --dry-run to preview the full plan.
+// S-004 real-write additions:
+//   - Output 5: package.json @pbuilder/sdk dev-dep — mutatePackageJSON (REQ-PM-01..04)
+//   - Install subprocess + MCP still return ErrCodeNotImplemented (S-005)
+//
+// Partial-write contract (Option A, S-004):
+//   Outputs 1, 2, 3, 4, and 5 are written to disk before ErrCodeNotImplemented is
+//   returned for the install subprocess. Users can re-run with --force after later
+//   slices land without data loss. Use --dry-run to preview the full plan.
 package initialise
 
 import (
@@ -61,10 +65,10 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 	}
 
 	if !req.DryRun {
-		// --- Real-write path (partial, S-003) ---
+		// --- Real-write path (partial, S-004) ---
 		//
-		// Outputs 1, 2, 3, and 4 are wired. Output 5 + install + MCP return
-		// ErrCodeNotImplemented until later slices land.
+		// Outputs 1, 2, 3, 4, and 5 are wired. Install subprocess + MCP return
+		// ErrCodeNotImplemented until S-005 lands.
 		//
 		// Partial-write caveat: if the service returns an error after writing
 		// earlier outputs, those files are already on disk. The user can re-run
@@ -114,14 +118,20 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 				return InitResult{}, agentErr
 			}
 
-			// Output 5: package.json @pbuilder/sdk dev-dep (REQ-PM-01..04) — S-004.
+			// Output 5: package.json @pbuilder/sdk dev-dep (REQ-PM-01..04).
+			_, pkgErr := mutatePackageJSON(s.fs, req)
+			if pkgErr != nil {
+				return InitResult{}, pkgErr
+			}
+
+			// Install subprocess (REQ-PD-01..04) — S-005.
 			return result, &errs.Error{
 				Code:    errs.ErrCodeNotImplemented,
 				Op:      "init.handler",
-				Message: "real-write of package.json mutation requires slice S-004; use --dry-run to preview the full plan, or run later slices first",
+				Message: "package manager detection and install subprocess require slice S-005; use --dry-run to preview the full plan, or run later slices first",
 				Suggestions: []string{
 					"use --dry-run to preview all planned operations without writing files",
-					"outputs 1, 2, 3, and 4 have been written; re-run with --force after S-004..S-005 land to complete init",
+					"outputs 1, 2, 3, 4, and 5 have been written; re-run after S-005 lands to complete init",
 				},
 			}
 		}
