@@ -73,6 +73,12 @@ func newRunE(svc *Service) func(*cobra.Command, []string) error {
 			mcpMode = defaultMCPMode(nonInteractive, isStdinTTY())
 		}
 
+		// Resolve MCPPrompt: in non-dry-run mode, actually prompt the user
+		// (REQ-MCP-01). Dry-run skips the prompt entirely (REQ-DR-01).
+		if !dryRun && mcpMode == MCPPrompt {
+			mcpMode = promptMCP(cmd.InOrStdin(), cmd.OutOrStdout())
+		}
+
 		// Swap to dryRunFS at request time so PlannedOps are collected fresh
 		// per invocation without affecting the osFS-backed production service
 		// (REQ-DR-01, ADR-020).

@@ -1,5 +1,5 @@
-// Package initialise — mcp.go contains MCP flag parsing, resolution, and TTY
-// detection helpers used by handler.RunE.
+// Package initialise — mcp.go contains MCP flag parsing, resolution, TTY
+// detection, and the interactive prompt helper used by handler.RunE.
 //
 // REQ-MCP-01: --mcp flag values (yes/no/prompt) are case-insensitive.
 // Default resolution:
@@ -7,9 +7,14 @@
 //   - TTY (no flag)           → MCPPrompt
 //   - non-TTY (no flag)       → MCPNo
 //   - --mcp=prompt + non-int  → ErrCodeInvalidInput (incompatible)
+//
+// REQ-MCP-01 prompt affirmatives: y, Y, yes, YES (trim trailing newline).
+// Anything else (including empty Enter) → MCPNo.
 package initialise
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"strings"
 
@@ -100,4 +105,25 @@ func isStdinTTY() bool {
 		return false
 	}
 	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// promptMCP writes mcpPromptQuestion to w and reads one line from r.
+// Returns MCPYes if the answer is affirmative (y, Y, yes, YES after trim).
+// Returns MCPNo for anything else, including empty Enter (capital-N default).
+// REQ-MCP-01.
+//
+// The handler calls this with os.Stdin and os.Stdout. Tests inject fake
+// io.Reader and io.Writer via the handler's stdin/stdout coupling.
+func promptMCP(r io.Reader, w io.Writer) MCPMode {
+	_, _ = io.WriteString(w, mcpPromptQuestion)
+
+	scanner := bufio.NewScanner(r)
+	if scanner.Scan() {
+		answer := strings.TrimRight(scanner.Text(), "\r\n")
+		switch answer {
+		case "y", "Y", "yes", "YES":
+			return MCPYes
+		}
+	}
+	return MCPNo
 }

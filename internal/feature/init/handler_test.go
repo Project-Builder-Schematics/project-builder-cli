@@ -14,6 +14,8 @@
 //   - REQ-MCP-01 (--mcp flag: yes/no/prompt accepted; invalid rejected)
 //   - REQ-MCP-01 (--mcp=prompt + --non-interactive → ErrCodeInvalidInput)
 //   - REQ-MCP-01 (--non-interactive + no --mcp flag → defaults to MCPNo)
+//   - REQ-MCP-01 (prompt loop: affirmative → MCPYes; negative/empty → MCPNo)
+//   - REQ-MCP-02 (dry-run skips prompt; real-mode with MCPPrompt does prompt)
 //   - REQ-MCP-03 (--json output includes mcp_setup_offered bool)
 //   - REQ-EC-03 (--publishable → ErrCodeInitNotImplemented via handler path)
 package initialise
@@ -24,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
@@ -395,5 +398,64 @@ func Test_Handler_EndToEnd_DryRun_JSON(t *testing.T) {
 	ops, ok := parsed["planned_ops"].([]any)
 	if !ok || len(ops) == 0 {
 		t.Errorf("planned_ops is empty or missing; got: %s", buf.Bytes())
+	}
+}
+
+// --- REQ-MCP-01: MCP prompt loop tests ---
+
+// Test_PromptMCP_AffirmativeResponses verifies that y, Y, yes, YES all
+// resolve to MCPYes. REQ-MCP-01 (affirmative set).
+func Test_PromptMCP_AffirmativeResponses(t *testing.T) {
+	t.Parallel()
+
+	affirmatives := []string{"y", "Y", "yes", "YES"}
+	for _, ans := range affirmatives {
+		ans := ans
+		t.Run(ans, func(t *testing.T) {
+			t.Parallel()
+			r := strings.NewReader(ans + "\n")
+			var w bytes.Buffer
+			got := promptMCP(r, &w)
+			if got != MCPYes {
+				t.Errorf("promptMCP(%q) = %q, want MCPYes (REQ-MCP-01)", ans, got)
+			}
+			// Prompt question must have been written.
+			if !strings.Contains(w.String(), mcpPromptQuestion) {
+				t.Errorf("prompt question not written to output")
+			}
+		})
+	}
+}
+
+// Test_PromptMCP_NegativeAndEmptyResponses verifies that empty Enter,
+// n, N, no, NO, and garbage all resolve to MCPNo. REQ-MCP-01.
+func Test_PromptMCP_NegativeAndEmptyResponses(t *testing.T) {
+	t.Parallel()
+
+	negatives := []string{"", "n", "N", "no", "NO", "maybe", "nope"}
+	for _, ans := range negatives {
+		ans := ans
+		t.Run("\""+ans+"\"", func(t *testing.T) {
+			t.Parallel()
+			r := strings.NewReader(ans + "\n")
+			var w bytes.Buffer
+			got := promptMCP(r, &w)
+			if got != MCPNo {
+				t.Errorf("promptMCP(%q) = %q, want MCPNo (REQ-MCP-01)", ans, got)
+			}
+		})
+	}
+}
+
+// Test_PromptMCP_EOF_ReturnsNo verifies that when stdin is closed with no
+// input (EOF), the prompt resolves to MCPNo. REQ-MCP-01.
+func Test_PromptMCP_EOF_ReturnsNo(t *testing.T) {
+	t.Parallel()
+
+	r := strings.NewReader("") // EOF immediately
+	var w bytes.Buffer
+	got := promptMCP(r, &w)
+	if got != MCPNo {
+		t.Errorf("promptMCP(EOF) = %q, want MCPNo", got)
 	}
 }

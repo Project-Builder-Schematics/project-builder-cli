@@ -23,12 +23,16 @@
 //
 // S-004 real-write additions:
 //   - Output 5: package.json @pbuilder/sdk dev-dep — mutatePackageJSON (REQ-PM-01..04)
-//   - Install subprocess + MCP still return ErrCodeNotImplemented (S-005)
 //
-// Partial-write contract (Option A, S-004):
-//   Outputs 1, 2, 3, 4, and 5 are written to disk before ErrCodeNotImplemented is
-//   returned for the install subprocess. Users can re-run with --force after later
-//   slices land without data loss. Use --dry-run to preview the full plan.
+// S-005 real-write additions (COMPLETE):
+//   - PM detection: s.pm.Detect(dir, flag) — priority chain per REQ-PD-01
+//   - --no-install: detect for pretty message, skip Install (REQ-PD-04)
+//   - Install subprocess: s.pm.Install(ctx, dir, pm) — 120s timeout (REQ-PD-02, ADR-023)
+//   - MCP instructions print: sets InitResult.MCPSetupOffered=true when MCP=yes (REQ-MCP-02)
+//
+// Write order LOCKED (REQ-EC-05):
+//   project-builder.json → schematics/.gitkeep → SKILL.md → AGENTS/CLAUDE → package.json
+//   → install subprocess → MCP instructions (flag in result; renderer prints)
 package initialise
 
 import (
@@ -124,15 +128,27 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 				return InitResult{}, pkgErr
 			}
 
-			// Install subprocess (REQ-PD-01..04) — S-005.
-			return result, &errs.Error{
-				Code:    errs.ErrCodeNotImplemented,
-				Op:      "init.handler",
-				Message: "package manager detection and install subprocess require slice S-005; use --dry-run to preview the full plan, or run later slices first",
-				Suggestions: []string{
-					"use --dry-run to preview all planned operations without writing files",
-					"outputs 1, 2, 3, 4, and 5 have been written; re-run after S-005 lands to complete init",
-				},
+			// PM detection (REQ-PD-01) — run even when --no-install so we can
+			// show the recommended PM in the pretty-mode "run X install" hint.
+			detectedPM, detectErr := s.pm.Detect(req.Directory, req.PackageManagerFlag)
+			if detectErr != nil {
+				return InitResult{}, detectErr
+			}
+			result.PackageManager = detectedPM
+
+			// Install subprocess (REQ-PD-02..04, ADR-023).
+			if !req.NoInstall {
+				if installErr := s.pm.Install(ctx, req.Directory, detectedPM); installErr != nil {
+					return InitResult{}, installErr
+				}
+				result.Installed = true
+			}
+			// --no-install: Detect still ran (for pretty message), Install skipped,
+			// Installed remains false.
+
+			// MCP instructions (REQ-MCP-02): set flag so renderer prints instructions.
+			if req.MCP == MCPYes {
+				result.MCPSetupOffered = true
 			}
 		}
 
@@ -201,11 +217,12 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 		}
 	}
 
-	// Note: install subprocess (REQ-PD-01) is NOT recorded as a PlannedOp in
-	// S-000 dry-run — PM detection requires the real filesystem and the subprocess
-	// cannot run in dry-run mode. The install_package op appears in S-005 when the
-	// real PM runner is wired. The stable PlannedOp enum reserves install_package
-	// for that slice (REQ-DR-02).
+	// Install subprocess op (REQ-PD-01, REQ-DR-02) — dry-run records the op
+	// so callers can preview that install will run. Skip when --no-install or
+	// --no-skill (package.json is also skipped in those cases).
+	if !req.NoSkill && !req.NoInstall {
+		recordInstallOp(s.fs)
+	}
 
 	// Output 6: MCP instructions (REQ-MCP-02) — dry-run records op, no print.
 	mcpOffered := false
@@ -235,6 +252,18 @@ func recordDevDepOp(fs FSWriter, pkgJSONPath string) error {
 	}
 	// Fallback: use AppendFile to trigger a recorded op (for fakeFS tests).
 	return fs.AppendFile(pkgJSONPath, nil)
+}
+
+// recordInstallOp records an install_package PlannedOp via the FSWriter.
+// Records the intent to run `<pm> install --save-dev @pbuilder/sdk`.
+// The exact PM is omitted here (not yet detected in dry-run mode).
+func recordInstallOp(fs FSWriter) {
+	type opRecorder interface {
+		recordOp(PlannedOp)
+	}
+	if r, ok := fs.(opRecorder); ok {
+		r.recordOp(PlannedOp{Op: "install_package", Details: "@pbuilder/sdk (dev-dep) via detected PM"})
+	}
 }
 
 // recordMCPOp records a mcp_setup_offered PlannedOp via the FSWriter.

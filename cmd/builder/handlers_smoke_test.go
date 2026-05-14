@@ -180,8 +180,9 @@ func Test_Init_DryRun_JSON_EndToEnd(t *testing.T) {
 	if !ok {
 		t.Fatalf("planned_ops is not an array; got: %s", buf.String())
 	}
-	if len(ops) != 6 {
-		t.Errorf("planned_ops count = %d, want 6 (5 outputs + mcp_setup_offered) (REQ-DR-02)", len(ops))
+	// S-005: 7 ops = 5 file outputs + install_package + mcp_setup_offered.
+	if len(ops) != 7 {
+		t.Errorf("planned_ops count = %d, want 7 (5 outputs + install_package + mcp_setup_offered) (REQ-DR-02)", len(ops))
 	}
 }
 

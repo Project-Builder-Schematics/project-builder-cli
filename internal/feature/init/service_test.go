@@ -3,11 +3,10 @@
 // REQ coverage:
 //   - REQ-FW-01 (FSWriter port; service never calls os.* directly)
 //   - REQ-DR-01 (dry-run records PlannedOps, zero real writes)
-//   - REQ-DR-02 (PlannedOps shape: stable 5-value op enum)
+//   - REQ-DR-02 (PlannedOps shape: stable 6-value op enum, incl. install_package)
 //   - REQ-EC-05 (write order: PJ → schematics → SKILL → AGENTS → pkg.json → install → MCP)
 //   - REQ-CS-05 (--publishable → ErrCodeInitNotImplemented)
-//   - REQ-MCP-02 (MCP=yes records mcp_setup_offered op in dry-run)
-//   - REQ-EC-03 (non-dry-run stub returns ErrCodeNotImplemented for S-000..S-001 guard)
+//   - REQ-MCP-02 (MCP=yes records mcp_setup_offered op in dry-run; sets flag in real-write)
 //   - REQ-SA-01 (real-write writes SKILL.md with locked bytes)
 //   - REQ-SA-02 (pre-existing SKILL.md without --force → warning in Warnings, no error)
 //   - REQ-SA-02 (pre-existing SKILL.md with --force → overwritten)
@@ -21,6 +20,12 @@
 //   - REQ-PM-02 (additive only — pre-existing deps preserved; malformed JSON → ErrCodeInvalidInput)
 //   - REQ-SA-03 regression (--no-skill skips package.json)
 //   - REQ-DR-01 regression (dry-run still records modify_devdep for package.json)
+//   - REQ-PD-01 (PM detection: detect called with correct flag; result in InitResult)
+//   - REQ-PD-02 (Install called once with detected PM; success → Installed=true)
+//   - REQ-PD-03 (Install fail → error returned)
+//   - REQ-PD-04 (--no-install: detect runs; install skipped; Installed=false)
+//   - REQ-MCP-02 (MCP=yes real-write → MCPSetupOffered=true)
+//   - REQ-MCP-02 (MCP=no real-write → MCPSetupOffered=false)
 package initialise
 
 import (
@@ -193,16 +198,17 @@ func Test_Service_Init_Publishable_ReturnsErrInitNotImplemented(t *testing.T) {
 	}
 }
 
-// Test_Service_Init_NonDryRun_ReturnsNotImplemented verifies that real-write
-// mode (DryRun=false) returns ErrCodeNotImplemented for the first un-wired
-// output stub. After S-004, this is the install subprocess (S-005).
-func Test_Service_Init_NonDryRun_ReturnsNotImplemented(t *testing.T) {
+// Test_Service_Init_NonDryRun_Succeeds verifies that real-write mode
+// (DryRun=false) now completes all 5 outputs + install (via fakePM with
+// no install error) and returns nil. REQ-PD-02 happy path via fakePM.
+// S-005: install subprocess is now fully wired.
+func Test_Service_Init_NonDryRun_Succeeds(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	ffs := newFakeFS()
-	pm := &fakePM{detectResult: PMNpm}
-	// Use non-empty skill bytes so outputs 3+4+5 succeed; stub fires for install (S-005).
+	pm := &fakePM{detectResult: PMNpm, installErr: nil}
+	// Use non-empty skill bytes so outputs 3+4+5 succeed.
 	svc := NewService(ffs, pm, []byte("placeholder"))
 
 	req := InitRequest{
@@ -210,14 +216,18 @@ func Test_Service_Init_NonDryRun_ReturnsNotImplemented(t *testing.T) {
 		DryRun:    false,
 	}
 
-	_, err := svc.Init(context.Background(), req)
-	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for un-wired install stub (S-005); got nil")
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("expected nil error after S-005 wiring; got: %v", err)
 	}
-
-	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("errors.Is(err, ErrCodeNotImplemented) = false; got: %v", err)
+	if !result.Installed {
+		t.Errorf("InitResult.Installed = false, want true after successful fakePM install")
+	}
+	if result.PackageManager != PMNpm {
+		t.Errorf("InitResult.PackageManager = %q, want %q", result.PackageManager, PMNpm)
+	}
+	if pm.installCalls != 1 {
+		t.Errorf("pm.installCalls = %d, want 1", pm.installCalls)
 	}
 }
 
@@ -258,15 +268,10 @@ func Test_Service_Init_DryRun_PlannedOps_AllStableOps(t *testing.T) {
 
 // Test_Service_Init_RealWrite_S001_WritesBothFiles verifies that in real-write
 // mode, Service.Init writes project-builder.json and schematics/.gitkeep with
-// the locked bytes. After S-003, outputs 1, 2, 3 (SKILL.md) and 4 (AGENTS
-// marker) are wired; output 5 + install + MCP still return ErrCodeNotImplemented.
-//
-// This test uses non-empty skill bytes so output 3 (SKILL.md) succeeds and
-// we hit the output 5 stub (S-004). Output 4 (AGENTS marker) also succeeds.
+// the locked bytes. After S-005, all outputs succeed end-to-end.
 //
 // REQ-PJ-01 (project-builder.json locked bytes via service path)
 // REQ-SF-01  (schematics/.gitkeep locked bytes via service path)
-// Option A partial-write contract: outputs 1..4 are written before error.
 func Test_Service_Init_RealWrite_S001_WritesBothFiles(t *testing.T) {
 	t.Parallel()
 
@@ -282,34 +287,29 @@ func Test_Service_Init_RealWrite_S001_WritesBothFiles(t *testing.T) {
 	}
 
 	_, err := svc.Init(context.Background(), req)
-	// S-003: expect ErrCodeNotImplemented for the not-yet-wired output 5 (package.json, S-004).
-	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for output 5 (package.json, S-004); got nil")
-	}
-
-	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("expected ErrCodeNotImplemented for S-003 partial real-write; got: %v", err)
+	// After S-005: all outputs succeed; no stub error expected.
+	if err != nil {
+		t.Fatalf("expected nil after S-005 full wiring; got: %v", err)
 	}
 
 	// Output 1: project-builder.json MUST have been written with locked bytes.
 	pbPath := filepath.Join(dir, "project-builder.json")
 	gotPB, readErr := ffs.ReadFile(pbPath)
 	if readErr != nil {
-		t.Fatalf("project-builder.json not written before error: %v", readErr)
+		t.Fatalf("project-builder.json not written: %v", readErr)
 	}
 	if !bytes.Equal(gotPB, lockedProjectBuilderJSON) {
-		t.Errorf("project-builder.json bytes mismatch after partial S-001 write\ngot:\n%s\nwant:\n%s", gotPB, lockedProjectBuilderJSON)
+		t.Errorf("project-builder.json bytes mismatch\ngot:\n%s\nwant:\n%s", gotPB, lockedProjectBuilderJSON)
 	}
 
 	// Output 2: schematics/.gitkeep MUST have been written with locked bytes.
 	gitkeepPath := filepath.Join(dir, schematicsFolderName, ".gitkeep")
 	gotGK, readErr := ffs.ReadFile(gitkeepPath)
 	if readErr != nil {
-		t.Fatalf("schematics/.gitkeep not written before error: %v", readErr)
+		t.Fatalf("schematics/.gitkeep not written: %v", readErr)
 	}
 	if !bytes.Equal(gotGK, lockedGitkeepBytes) {
-		t.Errorf("schematics/.gitkeep bytes mismatch after partial S-001 write\ngot:\n%q\nwant:\n%q", gotGK, lockedGitkeepBytes)
+		t.Errorf("schematics/.gitkeep bytes mismatch\ngot:\n%q\nwant:\n%q", gotGK, lockedGitkeepBytes)
 	}
 }
 
@@ -372,13 +372,9 @@ func Test_Service_Init_RealWrite_Force_OverwritesExistingConfig(t *testing.T) {
 
 	req := InitRequest{Directory: dir, DryRun: false, Force: true}
 	_, err := svc.Init(context.Background(), req)
-	// S-003 partial: ErrCodeNotImplemented for output 5 (package.json stub, S-004).
-	if err == nil {
-		t.Fatal("expected ErrCodeNotImplemented for S-003 partial real-write; got nil")
-	}
-	sentinel := &errs.Error{Code: errs.ErrCodeNotImplemented}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("expected ErrCodeNotImplemented; got: %v", err)
+	// After S-005: full wiring; no stub error.
+	if err != nil {
+		t.Fatalf("expected nil after S-005 full wiring; got: %v", err)
 	}
 
 	// project-builder.json must have been overwritten with locked bytes.
@@ -917,11 +913,11 @@ func Test_Service_Init_S004_DryRun_ModifyDevDepOp_Regression(t *testing.T) {
 
 // --- REQ-DR-02 regression after S-003 ---
 
-// Test_Service_Init_DryRun_WithMCP_HasSixOps verifies that with MCP=yes,
-// dry-run produces exactly 6 PlannedOps (5 outputs + mcp_setup_offered).
-// Without MCP, exactly 5 ops.
-// REQ-DR-02, S-000 acceptance criterion.
-func Test_Service_Init_DryRun_WithMCP_HasSixOps(t *testing.T) {
+// Test_Service_Init_DryRun_WithMCP_HasCorrectOpCount verifies that with MCP=yes,
+// dry-run produces exactly 7 PlannedOps (5 file ops + install_package + mcp_setup_offered).
+// Without MCP, exactly 6 ops (5 file ops + install_package).
+// REQ-DR-02, S-005 acceptance criterion.
+func Test_Service_Init_DryRun_WithMCP_HasCorrectOpCount(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -929,8 +925,8 @@ func Test_Service_Init_DryRun_WithMCP_HasSixOps(t *testing.T) {
 		mcp     MCPMode
 		wantOps int
 	}{
-		{name: "mcp=no", mcp: MCPNo, wantOps: 5},
-		{name: "mcp=yes", mcp: MCPYes, wantOps: 6},
+		{name: "mcp=no", mcp: MCPNo, wantOps: 6},
+		{name: "mcp=yes", mcp: MCPYes, wantOps: 7},
 	}
 
 	for _, tt := range tests {
@@ -953,5 +949,261 @@ func Test_Service_Init_DryRun_WithMCP_HasSixOps(t *testing.T) {
 				t.Errorf("PlannedOps count = %d, want %d (mcp=%s)", len(result.PlannedOps), tt.wantOps, tt.mcp)
 			}
 		})
+	}
+}
+
+// --- S-005 PM detection + install integration tests ---
+
+// Test_Service_S005_RealWrite_InstallCalled_HappyPath verifies that in real-write
+// mode Service.Init calls pm.Detect then pm.Install with the detected PM, and
+// sets InitResult.Installed=true, InitResult.PackageManager=<detected PM>.
+// REQ-PD-01, REQ-PD-02.
+func Test_Service_S005_RealWrite_InstallCalled_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMPnpm, installErr: nil}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{
+		Directory:          dir,
+		DryRun:             false,
+		MCP:                MCPNo,
+		PackageManagerFlag: PMUnset, // triggers lockfile detection path
+	}
+
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Init: unexpected error: %v", err)
+	}
+
+	if !result.Installed {
+		t.Errorf("InitResult.Installed = false, want true (REQ-PD-02 happy path)")
+	}
+	if result.PackageManager != PMPnpm {
+		t.Errorf("InitResult.PackageManager = %q, want %q (REQ-PD-01)", result.PackageManager, PMPnpm)
+	}
+	if pm.installCalls != 1 {
+		t.Errorf("pm.installCalls = %d, want 1", pm.installCalls)
+	}
+}
+
+// Test_Service_S005_RealWrite_FlagOverride_UsesFlag verifies that when
+// PackageManagerFlag is set, Detect uses it and Install is called with it.
+// REQ-PD-01 (flag override).
+func Test_Service_S005_RealWrite_FlagOverride_UsesFlag(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	// fakePM.detectResult is PMNpm, but the flag says PMYarn — flag wins.
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{
+		Directory:          dir,
+		DryRun:             false,
+		MCP:                MCPNo,
+		PackageManagerFlag: PMYarn,
+	}
+
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Init: unexpected error: %v", err)
+	}
+
+	if result.PackageManager != PMYarn {
+		t.Errorf("InitResult.PackageManager = %q, want %q (flag override, REQ-PD-01)", result.PackageManager, PMYarn)
+	}
+}
+
+// Test_Service_S005_RealWrite_InstallFails_ReturnsError verifies that when
+// pm.Install returns an error, Service.Init propagates it. REQ-PD-03.
+func Test_Service_S005_RealWrite_InstallFails_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	installErr := &errs.Error{
+		Code:    errs.ErrCodeExecutionFailed,
+		Op:      "init.handler",
+		Message: "simulated install failure",
+	}
+	pm := &fakePM{detectResult: PMNpm, installErr: installErr}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+	_, err := svc.Init(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when pm.Install fails; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) || e.Code != errs.ErrCodeExecutionFailed {
+		t.Errorf("expected ErrCodeExecutionFailed propagated; got: %v", err)
+	}
+}
+
+// Test_Service_S005_NoInstall_SkipsInstall verifies that when NoInstall=true,
+// pm.Install is NOT called, Installed=false, but PackageManager is still
+// populated (detect still runs for the pretty-print hint). REQ-PD-04.
+func Test_Service_S005_NoInstall_SkipsInstall(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMBun}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{
+		Directory: dir,
+		DryRun:    false,
+		MCP:       MCPNo,
+		NoInstall: true,
+	}
+
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Init with --no-install: unexpected error: %v", err)
+	}
+
+	if result.Installed {
+		t.Errorf("InitResult.Installed = true, want false when --no-install (REQ-PD-04)")
+	}
+	if pm.installCalls != 0 {
+		t.Errorf("pm.installCalls = %d, want 0 when --no-install", pm.installCalls)
+	}
+	// PackageManager should still be populated (detect ran for pretty print).
+	if result.PackageManager != PMBun {
+		t.Errorf("InitResult.PackageManager = %q, want %q (detect still ran for hint)", result.PackageManager, PMBun)
+	}
+}
+
+// Test_Service_S005_MCP_Yes_AfterInstall_SetsMCPSetupOffered verifies that
+// when MCP=yes and install succeeds, MCPSetupOffered=true (REQ-MCP-02).
+func Test_Service_S005_MCP_Yes_AfterInstall_SetsMCPSetupOffered(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{
+		Directory: dir,
+		DryRun:    false,
+		MCP:       MCPYes,
+	}
+
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Init MCP=yes: unexpected error: %v", err)
+	}
+
+	if !result.MCPSetupOffered {
+		t.Errorf("InitResult.MCPSetupOffered = false, want true when MCP=yes (REQ-MCP-02)")
+	}
+	if !result.Installed {
+		t.Errorf("InitResult.Installed = false, want true (install should have run)")
+	}
+}
+
+// Test_Service_S005_MCP_No_MCPSetupOffered_False verifies that when MCP=no,
+// MCPSetupOffered=false. REQ-MCP-02.
+func Test_Service_S005_MCP_No_MCPSetupOffered_False(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: false, MCP: MCPNo}
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Init MCP=no: unexpected error: %v", err)
+	}
+
+	if result.MCPSetupOffered {
+		t.Errorf("InitResult.MCPSetupOffered = true, want false when MCP=no (REQ-MCP-02)")
+	}
+}
+
+// Test_Service_S005_MCP_Yes_NoInstall_SetsMCPSetupOffered verifies that even
+// with --no-install, MCP=yes still sets MCPSetupOffered=true after the
+// package.json mutation (REQ-MCP-02).
+func Test_Service_S005_MCP_Yes_NoInstall_SetsMCPSetupOffered(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ffs := newFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(ffs, pm, template.Skill)
+
+	req := InitRequest{
+		Directory: dir,
+		DryRun:    false,
+		MCP:       MCPYes,
+		NoInstall: true,
+	}
+
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Init MCP=yes --no-install: unexpected error: %v", err)
+	}
+
+	if !result.MCPSetupOffered {
+		t.Errorf("MCPSetupOffered = false with MCP=yes --no-install (REQ-MCP-02): instructions should still be offered")
+	}
+}
+
+// Test_Service_S005_DryRun_HasInstallPackageOp verifies that dry-run includes
+// the install_package PlannedOp when --no-install is not set. REQ-DR-02.
+func Test_Service_S005_DryRun_HasInstallPackageOp(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dfs := newDryRunFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(dfs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: true, MCP: MCPNo}
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var found bool
+	for _, op := range result.PlannedOps {
+		if op.Op == "install_package" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("PlannedOps does not contain install_package (REQ-DR-02 — S-005 wired)")
+	}
+}
+
+// Test_Service_S005_DryRun_NoInstall_NoInstallPackageOp verifies that with
+// --no-install, dry-run does NOT record install_package. REQ-PD-04.
+func Test_Service_S005_DryRun_NoInstall_NoInstallPackageOp(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dfs := newDryRunFakeFS()
+	pm := &fakePM{detectResult: PMNpm}
+	svc := NewService(dfs, pm, template.Skill)
+
+	req := InitRequest{Directory: dir, DryRun: true, MCP: MCPNo, NoInstall: true}
+	result, err := svc.Init(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, op := range result.PlannedOps {
+		if op.Op == "install_package" {
+			t.Errorf("PlannedOps contains install_package despite --no-install (REQ-PD-04)")
+		}
 	}
 }
