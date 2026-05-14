@@ -4,9 +4,9 @@
 //   - REQ-AR-01 (locked marker block appended with correct bytes)
 //   - REQ-AR-02 (line-exact idempotency; substring match does NOT trigger skip)
 //   - REQ-AR-03 (file selection precedence: both→AGENTS.md, only AGENTS→AGENTS.md,
-//                only CLAUDE→CLAUDE.md, neither→create AGENTS.md)
+//     only CLAUDE→CLAUDE.md, neither→create AGENTS.md)
 //   - REQ-AR-04 (both files already contain marker → ErrCodeInitAgentFileAmbiguous
-//                unless --force; force appends second copy to AGENTS.md)
+//     unless --force; force appends second copy to AGENTS.md)
 //   - REQ-AR-05 (symlink resolved outside project dir → ErrCodeInvalidInput)
 package initialise
 
@@ -22,9 +22,6 @@ import (
 // lockedMarkerBegin is the exact opening comment used in the marker block.
 // Must match the durable post-v1.0.0 contract.
 const lockedMarkerBegin = "<!-- pbuilder:skill:begin -->"
-
-// lockedMarkerEnd is the exact closing comment.
-const lockedMarkerEnd = "<!-- pbuilder:skill:end -->"
 
 // expectedMarkerBlock is the full locked block that must be appended.
 // REQ-AR-01.

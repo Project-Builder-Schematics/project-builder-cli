@@ -45,8 +45,13 @@ func (o *osFS) EvalSymlinks(path string) (string, error) {
 }
 
 // ReadFile delegates to os.ReadFile.
+//
+// G304 is suppressed: the path is supplied by the init handler after
+// canonicaliseDir (REQ-DV-01: filepath.Abs + filepath.Clean + .. traversal
+// rejection). This osFS is only used in production via composeApp wiring;
+// tests use fakeFS.
 func (o *osFS) ReadFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
+	return os.ReadFile(path) // #nosec G304 — path validated by canonicaliseDir
 }
 
 // WriteFile writes data atomically: create a temp file in the same parent
@@ -100,12 +105,25 @@ func (o *osFS) MkdirAll(path string, perm os.FileMode) error {
 }
 
 // AppendFile opens path with O_APPEND|O_CREATE|O_WRONLY and writes data.
-func (o *osFS) AppendFile(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+//
+// G302 is suppressed: 0o644 is the standard POSIX permission for
+// user-readable text files like AGENTS.md and CLAUDE.md (the only files
+// init's AppendFile is used against). Reducing to 0o600 would break the
+// project's existing convention for these files which are intended to be
+// committed and shared.
+//
+// G304 is suppressed: path is supplied by the init handler after
+// canonicaliseDir (REQ-DV-01); same justification as ReadFile above.
+func (o *osFS) AppendFile(path string, data []byte) (retErr error) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) // #nosec G302,G304 — see godoc
 	if err != nil {
 		return fmt.Errorf("osFS.AppendFile: open %q: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("osFS.AppendFile: close %q: %w", path, cerr)
+		}
+	}()
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("osFS.AppendFile: write %q: %w", path, err)
 	}

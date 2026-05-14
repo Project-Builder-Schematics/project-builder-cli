@@ -106,13 +106,13 @@ Run 'builder <command> --help' for command-specific usage.`,
 
 	// Register all 8 leaf commands (cobra-command-tree.REQ-01.1).
 	root.AddCommand(initialise.NewCommand(initSvc)) // init
-	root.AddCommand(execute.NewCommand())    // execute
-	root.AddCommand(add.NewCommand())        // add
-	root.AddCommand(info.NewCommand())       // info
-	root.AddCommand(sync.NewCommand())       // sync
-	root.AddCommand(validate.NewCommand())   // validate
-	root.AddCommand(remove.NewCommand())     // remove
-	root.AddCommand(skill.NewCommand())      // skill (parent; skill update is its leaf)
+	root.AddCommand(execute.NewCommand())           // execute
+	root.AddCommand(add.NewCommand())               // add
+	root.AddCommand(info.NewCommand())              // info
+	root.AddCommand(sync.NewCommand())              // sync
+	root.AddCommand(validate.NewCommand())          // validate
+	root.AddCommand(remove.NewCommand())            // remove
+	root.AddCommand(skill.NewCommand())             // skill (parent; skill update is its leaf)
 
 	return &App{
 		Engine:   eng,

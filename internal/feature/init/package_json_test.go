@@ -328,4 +328,3 @@ func Test_MutatePackageJSON_VersionRange_ExactLiteral(t *testing.T) {
 		t.Errorf("version range mismatch; want exact %q\ngot:\n%s", wantRange, content)
 	}
 }
-

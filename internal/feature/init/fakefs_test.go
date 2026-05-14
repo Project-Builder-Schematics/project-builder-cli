@@ -40,8 +40,8 @@ func newFakeFS() *fakeFS {
 // newDryRunFakeFS returns a fakeFS in record-only mode, mimicking dryRunFS.
 func newDryRunFakeFS() *fakeFS {
 	return &fakeFS{
-		files:    make(map[string][]byte),
-		symlinks: make(map[string]string),
+		files:      make(map[string][]byte),
+		symlinks:   make(map[string]string),
 		recordOnly: true,
 	}
 }

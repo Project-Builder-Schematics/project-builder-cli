@@ -14,6 +14,7 @@
 //  7. Re-marshal inner devDeps map → store back in outer map
 //  8. MarshalIndent with 2-space prefix + final newline (REQ-PM-03)
 //  9. WriteFile (atomic via FSWriter — REQ-PM-04)
+//
 // 10. Return absolute path
 //
 // # Field ordering

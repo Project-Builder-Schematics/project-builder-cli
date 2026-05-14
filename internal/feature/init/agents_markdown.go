@@ -47,10 +47,6 @@ import (
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 )
 
-// agentFileNames lists the candidate filenames for the marker, in
-// descending preference order. REQ-AR-03.
-var agentFileNames = [2]string{"AGENTS.md", "CLAUDE.md"}
-
 // markerBeginLine is the exact line that triggers idempotency skip (REQ-AR-02).
 // Must remain stable post-v1.0.0.
 const markerBeginLine = "<!-- pbuilder:skill:begin -->"
@@ -76,114 +72,123 @@ func appendAgentsMarker(projectDir string, force bool, fs FSWriter) (string, err
 	agentsPath := filepath.Join(projectDir, "AGENTS.md")
 	claudePath := filepath.Join(projectDir, "CLAUDE.md")
 
-	// --- 1. Symlink safety for both candidate paths (REQ-AR-05) ---
-	//
-	// We check both regardless of whether the file exists, so that an
-	// adversarial symlink registered for either path is caught early.
+	// Symlink safety for both candidate paths (REQ-AR-05) — check both regardless
+	// of existence so an adversarial symlink for either path is caught early.
 	for _, candidate := range []string{agentsPath, claudePath} {
 		if err := checkSymlinkSafety(candidate, projectDir, fs); err != nil {
 			return "", err
 		}
 	}
 
-	// --- 2. Stat both files ---
-	agentsExists := fileExists(fs, agentsPath)
-	claudeExists := fileExists(fs, claudePath)
-
-	// --- 3. Read existing content to check for markers ---
-	agentsHasMarker := false
-	claudeHasMarker := false
-
-	if agentsExists {
-		data, err := fs.ReadFile(agentsPath)
-		if err != nil {
-			return "", &errs.Error{
-				Code:        errs.ErrCodeInvalidInput,
-				Op:          "init.appendAgentsMarker",
-				Message:     "failed to read AGENTS.md: " + err.Error(),
-				Cause:       err,
-				Suggestions: []string{"check file permissions for AGENTS.md"},
-			}
-		}
-		agentsHasMarker = containsMarkerLine(string(data))
+	state, err := readAgentFileState(fs, agentsPath, claudePath)
+	if err != nil {
+		return "", err
 	}
 
-	if claudeExists {
-		data, err := fs.ReadFile(claudePath)
-		if err != nil {
-			return "", &errs.Error{
-				Code:        errs.ErrCodeInvalidInput,
-				Op:          "init.appendAgentsMarker",
-				Message:     "failed to read CLAUDE.md: " + err.Error(),
-				Cause:       err,
-				Suggestions: []string{"check file permissions for CLAUDE.md"},
-			}
-		}
-		claudeHasMarker = containsMarkerLine(string(data))
-	}
-
-	// --- 4. Ambiguity check (REQ-AR-04) ---
-	//
-	// Both files exist AND both already contain the marker.
-	// With force=false: return ErrCodeInitAgentFileAmbiguous.
-	// With force=true: append second copy to AGENTS.md unconditionally.
-	if agentsExists && claudeExists && agentsHasMarker && claudeHasMarker {
+	// Ambiguity check (REQ-AR-04): both files marked → error unless --force.
+	if state.bothMarkered() {
 		if !force {
-			return "", &errs.Error{
-				Code:    errs.ErrCodeInitAgentFileAmbiguous,
-				Op:      "init.appendAgentsMarker",
-				Message: "both AGENTS.md and CLAUDE.md already contain the pbuilder skill marker — ambiguous which file to update",
-				Suggestions: []string{
-					"run with --force to append a second copy to AGENTS.md",
-					"remove the marker from CLAUDE.md manually and re-run",
-					"remove the marker from AGENTS.md manually and re-run",
-				},
-			}
+			return "", ambiguousAgentFilesError()
 		}
-		// force=true: bypass idempotency, append to AGENTS.md.
+		// force=true: bypass idempotency, append second copy to AGENTS.md.
 		return agentsPath, appendMarkerToFile(fs, agentsPath)
 	}
 
-	// --- 5. Select target file (REQ-AR-03) ---
-	var target string
-	switch {
-	case agentsExists && !agentsHasMarker:
-		// Case 1 (both exist, agents not markered) or case 2 (only AGENTS.md).
-		target = agentsPath
-	case agentsExists && agentsHasMarker && claudeExists && !claudeHasMarker:
-		// AGENTS.md has the marker but CLAUDE.md doesn't — write to AGENTS.md
-		// per selection rule (AGENTS preferred; idempotency already handled for agents).
-		// Actually: agents is marked → skip; select per precedence for unmarked.
-		// Since agents IS marked, it would be idempotent (skip). But CLAUDE isn't.
-		// Precedence: still prefer AGENTS.md. Since it's already marked, that's a skip.
-		target = agentsPath
-	case !agentsExists && claudeExists && !claudeHasMarker:
-		// Case 3: only CLAUDE.md exists.
-		target = claudePath
-	case !agentsExists && claudeExists && claudeHasMarker:
-		// Only CLAUDE.md exists and it's already marked → idempotent skip.
-		target = claudePath
-	case !agentsExists && !claudeExists:
-		// Case 4: neither exists → create AGENTS.md.
-		target = agentsPath
-	default:
-		// Only AGENTS.md exists (may or may not have the marker).
-		target = agentsPath
+	target := selectMarkerTarget(agentsPath, claudePath, state)
+
+	// Idempotency (REQ-AR-02): target already markered → no-op.
+	if (target == agentsPath && state.agentsHasMarker) ||
+		(target == claudePath && state.claudeHasMarker) {
+		return target, nil
 	}
 
-	// --- 6. Idempotency check (REQ-AR-02) ---
-	//
-	// If the selected target already has the marker (line-exact), this is a
-	// no-op. Return the path without writing anything.
-	if target == agentsPath && agentsHasMarker {
-		return agentsPath, nil
-	}
-	if target == claudePath && claudeHasMarker {
-		return claudePath, nil
-	}
-
-	// --- 7. Append the marker block ---
 	return target, appendMarkerToFile(fs, target)
+}
+
+// agentFileState captures the existence + marker presence of AGENTS.md and
+// CLAUDE.md in a single read pass. Pure data — no I/O.
+type agentFileState struct {
+	agentsExists    bool
+	claudeExists    bool
+	agentsHasMarker bool
+	claudeHasMarker bool
+}
+
+// bothMarkered reports the REQ-AR-04 ambiguity condition.
+func (s agentFileState) bothMarkered() bool {
+	return s.agentsExists && s.claudeExists && s.agentsHasMarker && s.claudeHasMarker
+}
+
+// readAgentFileState stats both candidates and reads marker presence in one pass.
+// Read failures (file exists but cannot be opened) surface as ErrCodeInvalidInput.
+func readAgentFileState(fs FSWriter, agentsPath, claudePath string) (agentFileState, error) {
+	state := agentFileState{
+		agentsExists: fileExists(fs, agentsPath),
+		claudeExists: fileExists(fs, claudePath),
+	}
+
+	if state.agentsExists {
+		markered, err := readMarkerPresence(fs, agentsPath, "AGENTS.md")
+		if err != nil {
+			return state, err
+		}
+		state.agentsHasMarker = markered
+	}
+
+	if state.claudeExists {
+		markered, err := readMarkerPresence(fs, claudePath, "CLAUDE.md")
+		if err != nil {
+			return state, err
+		}
+		state.claudeHasMarker = markered
+	}
+
+	return state, nil
+}
+
+// readMarkerPresence reads path and returns true iff the locked marker
+// begin-line appears (REQ-AR-02 line-exact match).
+func readMarkerPresence(fs FSWriter, path, label string) (bool, error) {
+	data, err := fs.ReadFile(path)
+	if err != nil {
+		return false, &errs.Error{
+			Code:        errs.ErrCodeInvalidInput,
+			Op:          "init.appendAgentsMarker",
+			Message:     "failed to read " + label + ": " + err.Error(),
+			Cause:       err,
+			Suggestions: []string{"check file permissions for " + label},
+		}
+	}
+	return containsMarkerLine(string(data)), nil
+}
+
+// ambiguousAgentFilesError builds the REQ-AR-04 error for both files markered.
+func ambiguousAgentFilesError() error {
+	return &errs.Error{
+		Code:    errs.ErrCodeInitAgentFileAmbiguous,
+		Op:      "init.appendAgentsMarker",
+		Message: "both AGENTS.md and CLAUDE.md already contain the pbuilder skill marker — ambiguous which file to update",
+		Suggestions: []string{
+			"run with --force to append a second copy to AGENTS.md",
+			"remove the marker from CLAUDE.md manually and re-run",
+			"remove the marker from AGENTS.md manually and re-run",
+		},
+	}
+}
+
+// selectMarkerTarget implements REQ-AR-03 selection precedence:
+//  1. AGENTS.md preferred when both exist
+//  2. only AGENTS.md → AGENTS.md
+//  3. only CLAUDE.md → CLAUDE.md
+//  4. neither exists → create AGENTS.md (default)
+//
+// Pure logic — no I/O — so coverage by table-driven tests is straightforward.
+func selectMarkerTarget(agentsPath, claudePath string, s agentFileState) string {
+	if !s.agentsExists && s.claudeExists {
+		return claudePath
+	}
+	// All other cases (agents exists, or neither exists) → AGENTS.md.
+	return agentsPath
 }
 
 // appendMarkerToFile reads the current content of target (empty if not

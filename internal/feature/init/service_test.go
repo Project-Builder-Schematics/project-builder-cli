@@ -36,8 +36,8 @@ import (
 	"strings"
 	"testing"
 
-	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init/template"
+	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 )
 
 // newTestService constructs a Service with in-memory fakes suitable for unit tests.
@@ -442,7 +442,6 @@ func Test_Service_Init_S002_PreexistingSkill_NoForce_WarningInResult(t *testing.
 
 	req := InitRequest{Directory: dir, DryRun: false, Force: false, MCP: MCPNo}
 	result, err := svc.Init(context.Background(), req)
-
 	// Hard error from ErrCodeNotImplemented (S-004 stub for output 5) is still
 	// acceptable — but ErrCodeInitSkillExists must NOT propagate as the hard error.
 	if err != nil {

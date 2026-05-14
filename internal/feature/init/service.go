@@ -31,8 +31,9 @@
 //   - MCP instructions print: sets InitResult.MCPSetupOffered=true when MCP=yes (REQ-MCP-02)
 //
 // Write order LOCKED (REQ-EC-05):
-//   project-builder.json → schematics/.gitkeep → SKILL.md → AGENTS/CLAUDE → package.json
-//   → install subprocess → MCP instructions (flag in result; renderer prints)
+//
+//	project-builder.json → schematics/.gitkeep → SKILL.md → AGENTS/CLAUDE → package.json
+//	→ install subprocess → MCP instructions (flag in result; renderer prints)
 package initialise
 
 import (
@@ -57,126 +58,113 @@ import (
 func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error) {
 	// Guard: --publishable not yet implemented (REQ-CS-05).
 	if req.Publishable {
-		return InitResult{}, &errs.Error{
-			Code:    errs.ErrCodeInitNotImplemented,
-			Op:      "init.handler",
-			Message: "--publishable mode is not yet implemented (planned for builder-init-publishable)",
-			Suggestions: []string{
-				"re-run without --publishable for the standard init flow",
-				"track progress: https://github.com/Project-Builder-Schematics/project-builder-cli",
-			},
-		}
+		return InitResult{}, notImplementedErr()
+	}
+	if req.DryRun {
+		return s.dryRun(req)
+	}
+	return s.realWrite(ctx, req)
+}
+
+// notImplementedErr returns the REQ-CS-05 error for --publishable.
+func notImplementedErr() error {
+	return &errs.Error{
+		Code:    errs.ErrCodeInitNotImplemented,
+		Op:      "init.handler",
+		Message: "--publishable mode is not yet implemented (planned for builder-init-publishable)",
+		Suggestions: []string{
+			"re-run without --publishable for the standard init flow",
+			"track progress: https://github.com/Project-Builder-Schematics/project-builder-cli",
+		},
+	}
+}
+
+// realWrite orchestrates the five outputs + install + MCP for non-dry-run mode.
+//
+// Partial-write caveat: if an error occurs after earlier outputs land, those
+// files remain on disk. Re-run with --force to complete (or use --dry-run first).
+func (s *Service) realWrite(ctx context.Context, req InitRequest) (InitResult, error) {
+	result := InitResult{Directory: req.Directory}
+
+	// Outputs 1+2: always run (REQ-PJ-01..04, REQ-DV-04, REQ-SF-01..02).
+	if _, err := writeProjectConfig(s.fs, req); err != nil {
+		return InitResult{}, err
+	}
+	if _, err := writeSchematicsSkel(s.fs, req); err != nil {
+		return InitResult{}, err
 	}
 
-	if !req.DryRun {
-		// --- Real-write path (partial, S-004) ---
-		//
-		// Outputs 1, 2, 3, 4, and 5 are wired. Install subprocess + MCP return
-		// ErrCodeNotImplemented until S-005 lands.
-		//
-		// Partial-write caveat: if the service returns an error after writing
-		// earlier outputs, those files are already on disk. The user can re-run
-		// with --force after later slices are installed to complete the init.
-		// Use --dry-run to preview the full plan without any writes.
-
-		var result InitResult
-		result.Directory = req.Directory
-
-		// Output 1: project-builder.json (REQ-PJ-01..04, REQ-DV-04).
-		if _, err := writeProjectConfig(s.fs, req); err != nil {
-			return InitResult{}, err
-		}
-
-		// Output 2: schematics/.gitkeep (REQ-SF-01..02).
-		if _, err := writeSchematicsSkel(s.fs, req); err != nil {
-			return InitResult{}, err
-		}
-
-		// Output 3: SKILL.md (REQ-SA-01..03) — skip if --no-skill.
-		if !req.NoSkill {
-			skillPath, skillErr := writeSkillArtefact(s.fs, req, s.skill)
-			if skillErr != nil {
-				// ErrCodeInitSkillExists means the file was pre-existing and Force=false.
-				// Per REQ-SA-02, this is a WARNING not a failure: record it and continue.
-				skipSentinel := &errs.Error{Code: errs.ErrCodeInitSkillExists}
-				if errors.Is(skillErr, skipSentinel) {
-					var e *errs.Error
-					if errors.As(skillErr, &e) {
-						result.Warnings = append(result.Warnings, e.Message)
-					}
-					// skillPath is still set to the existing file path — record it.
-					_ = skillPath
-				} else {
-					// Any other error is fatal.
-					return InitResult{}, skillErr
-				}
-			}
-		}
-
-		// --no-skill skips outputs 3, 4, and the SDK dev-dep atomically (REQ-SA-03).
-		// When NoSkill=true, we jump past outputs 4+5 entirely.
-		if !req.NoSkill {
-			// Output 4: AGENTS.md/CLAUDE.md marker (REQ-AR-01..05).
-			_, agentErr := appendAgentsMarker(req.Directory, req.Force, s.fs)
-			if agentErr != nil {
-				return InitResult{}, agentErr
-			}
-
-			// Output 5: package.json @pbuilder/sdk dev-dep (REQ-PM-01..04).
-			_, pkgErr := mutatePackageJSON(s.fs, req)
-			if pkgErr != nil {
-				return InitResult{}, pkgErr
-			}
-
-			// PM detection (REQ-PD-01) — run even when --no-install so we can
-			// show the recommended PM in the pretty-mode "run X install" hint.
-			detectedPM, detectErr := s.pm.Detect(req.Directory, req.PackageManagerFlag)
-			if detectErr != nil {
-				return InitResult{}, detectErr
-			}
-			result.PackageManager = detectedPM
-
-			// Install subprocess (REQ-PD-02..04, ADR-023).
-			if !req.NoInstall {
-				if installErr := s.pm.Install(ctx, req.Directory, detectedPM); installErr != nil {
-					return InitResult{}, installErr
-				}
-				result.Installed = true
-			}
-			// --no-install: Detect still ran (for pretty message), Install skipped,
-			// Installed remains false.
-
-			// MCP instructions (REQ-MCP-02): set flag so renderer prints instructions.
-			if req.MCP == MCPYes {
-				result.MCPSetupOffered = true
-			}
-		}
-
-		// --no-skill path: outputs 4+5+install+MCP are all skipped.
-		// Outputs 1 and 2 were written above; output 3 was skipped.
+	// --no-skill atomically skips outputs 3+4+5+install+MCP (REQ-SA-03).
+	if req.NoSkill {
 		return result, nil
 	}
 
-	// --- Dry-run path ---
+	// Output 3: SKILL.md (REQ-SA-01..03). ErrInitSkillExists is a warning, not fatal.
+	if err := s.writeSkillWithWarning(req, &result); err != nil {
+		return InitResult{}, err
+	}
 
-	// We need a dryRunFS to record ops. The service receives the fs dependency
-	// from the constructor. In dry-run mode the handler swaps to a dryRunFS
-	// so s.fs here IS a dryRunFS. However, to be defensive (the service should
-	// not depend on the handler's swap), we work through s.fs's FSWriter methods
-	// which in dry-run mode will record the ops correctly.
-	//
-	// The dryRunFS.recordOp method is used for ops that don't map naturally to
-	// Stat/Write/Append calls (install_package, mcp_setup_offered). We use a
-	// type assertion to access it — if the underlying fs does not expose it,
-	// we fall back to recording nothing (fakeFS in tests uses its own recordOp).
+	// Output 4: AGENTS.md/CLAUDE.md marker (REQ-AR-01..05).
+	if _, err := appendAgentsMarker(req.Directory, req.Force, s.fs); err != nil {
+		return InitResult{}, err
+	}
 
-	// Output 1: project-builder.json (REQ-PJ-01)
+	// Output 5: package.json @pbuilder/sdk dev-dep (REQ-PM-01..04).
+	if _, err := mutatePackageJSON(s.fs, req); err != nil {
+		return InitResult{}, err
+	}
+
+	// Install + MCP flag.
+	return s.runInstallAndMCP(ctx, req, result)
+}
+
+// writeSkillWithWarning runs writeSkillArtefact and turns ErrCodeInitSkillExists
+// into a warning on result.Warnings rather than a hard error (REQ-SA-02).
+func (s *Service) writeSkillWithWarning(req InitRequest, result *InitResult) error {
+	if _, err := writeSkillArtefact(s.fs, req, s.skill); err != nil {
+		var e *errs.Error
+		if errors.As(err, &e) && e.Code == errs.ErrCodeInitSkillExists {
+			result.Warnings = append(result.Warnings, e.Message)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// runInstallAndMCP handles the PM detection, optional install subprocess, and
+// MCP flag finalisation. Detect runs even when --no-install so the renderer can
+// show the recommended PM in the "run X install" hint.
+func (s *Service) runInstallAndMCP(ctx context.Context, req InitRequest, result InitResult) (InitResult, error) {
+	detectedPM, err := s.pm.Detect(req.Directory, req.PackageManagerFlag)
+	if err != nil {
+		return InitResult{}, err
+	}
+	result.PackageManager = detectedPM
+
+	if !req.NoInstall {
+		if err := s.pm.Install(ctx, req.Directory, detectedPM); err != nil {
+			return InitResult{}, err
+		}
+		result.Installed = true
+	}
+
+	if req.MCP == MCPYes {
+		result.MCPSetupOffered = true
+	}
+	return result, nil
+}
+
+// dryRun records the full PlannedOps sequence (REQ-DR-01..02) without writing
+// to the real filesystem. The handler swaps to a dryRunFS at request time so
+// every WriteFile / MkdirAll / AppendFile call is captured as a PlannedOp.
+func (s *Service) dryRun(req InitRequest) (InitResult, error) {
+	// Outputs 1+2: always recorded.
 	pbJSON := filepath.Join(req.Directory, "project-builder.json")
 	if err := s.fs.WriteFile(pbJSON, []byte("{}"), 0o644); err != nil {
 		return InitResult{}, err
 	}
 
-	// Output 2: schematics/.gitkeep (REQ-SF-01)
 	schematicsDir := filepath.Join(req.Directory, schematicsFolderName)
 	gitkeep := filepath.Join(schematicsDir, ".gitkeep")
 	if err := s.fs.MkdirAll(schematicsDir, 0o755); err != nil {
@@ -186,49 +174,20 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 		return InitResult{}, err
 	}
 
-	// Output 3: SKILL.md (REQ-SA-01) — skip if --no-skill.
+	// Outputs 3+4+5+install are gated by --no-skill / --no-install.
 	if !req.NoSkill {
-		skillPath := filepath.Join(req.Directory, ".claude", "skills", "pbuilder", "SKILL.md")
-		skillDir := filepath.Dir(skillPath)
-		if err := s.fs.MkdirAll(skillDir, 0o755); err != nil {
+		if err := s.dryRunSkillBlock(req); err != nil {
 			return InitResult{}, err
 		}
-		if err := s.fs.WriteFile(skillPath, s.skill, 0o644); err != nil {
-			return InitResult{}, err
-		}
-
-		// Output 4: AGENTS.md marker (REQ-AR-01) — skip if --no-skill.
-		// In dry-run mode, record the append_marker op for AGENTS.md (default
-		// precedence). The real target selection (AGENTS vs CLAUDE) happens in
-		// the real-write path via appendAgentsMarker.
-		agentsPath := filepath.Join(req.Directory, "AGENTS.md")
-		if err := s.fs.AppendFile(agentsPath, []byte(agentMarkerBlock)); err != nil {
-			return InitResult{}, err
+		if !req.NoInstall {
+			recordInstallOp(s.fs)
 		}
 	}
 
-	// Output 5: package.json @pbuilder/sdk dev-dep (REQ-PM-01) — skip if --no-skill.
-	if !req.NoSkill {
-		pkgJSON := filepath.Join(req.Directory, "package.json")
-		// In dry-run mode, record the modify_devdep op via the FSWriter.
-		// The actual JSON mutation is implemented in S-004.
-		if err := recordDevDepOp(s.fs, pkgJSON); err != nil {
-			return InitResult{}, err
-		}
-	}
-
-	// Install subprocess op (REQ-PD-01, REQ-DR-02) — dry-run records the op
-	// so callers can preview that install will run. Skip when --no-install or
-	// --no-skill (package.json is also skipped in those cases).
-	if !req.NoSkill && !req.NoInstall {
-		recordInstallOp(s.fs)
-	}
-
-	// Output 6: MCP instructions (REQ-MCP-02) — dry-run records op, no print.
-	mcpOffered := false
-	if req.MCP == MCPYes {
+	// Output 6: MCP op.
+	mcpOffered := req.MCP == MCPYes
+	if mcpOffered {
 		recordMCPOp(s.fs)
-		mcpOffered = true
 	}
 
 	return InitResult{
@@ -237,6 +196,28 @@ func (s *Service) Init(ctx context.Context, req InitRequest) (InitResult, error)
 		PlannedOps:      s.fs.PlannedOps(),
 		MCPSetupOffered: mcpOffered,
 	}, nil
+}
+
+// dryRunSkillBlock records the three "--no-skill-gated" outputs (SKILL.md,
+// AGENTS marker, package.json mutation). All three skip atomically with --no-skill.
+func (s *Service) dryRunSkillBlock(req InitRequest) error {
+	skillPath := filepath.Join(req.Directory, ".claude", "skills", "pbuilder", "SKILL.md")
+	if err := s.fs.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		return err
+	}
+	if err := s.fs.WriteFile(skillPath, s.skill, 0o644); err != nil {
+		return err
+	}
+
+	// AGENTS marker (dry-run records for AGENTS.md by default; real target
+	// selection happens in the realWrite path via appendAgentsMarker).
+	agentsPath := filepath.Join(req.Directory, "AGENTS.md")
+	if err := s.fs.AppendFile(agentsPath, []byte(agentMarkerBlock)); err != nil {
+		return err
+	}
+
+	pkgJSON := filepath.Join(req.Directory, "package.json")
+	return recordDevDepOp(s.fs, pkgJSON)
 }
 
 // recordDevDepOp records a modify_devdep PlannedOp via the FSWriter.

@@ -147,4 +147,3 @@ func Test_WriteSkillArtefact_NoSkill_NoOp(t *testing.T) {
 		t.Errorf("SKILL.md was written despite --no-skill (REQ-SA-03)")
 	}
 }
-

@@ -97,7 +97,7 @@ func Test_OsFS_WriteFile_AtomicRename(t *testing.T) {
 	}
 
 	// File must exist and contain the expected bytes.
-	got, err := os.ReadFile(target)
+	got, err := os.ReadFile(target) // #nosec G304 — test fixture path under t.TempDir()
 	if err != nil {
 		t.Fatalf("os.ReadFile after WriteFile: %v", err)
 	}
@@ -148,7 +148,7 @@ func Test_OsFS_AppendFile_CreatesAndAppends(t *testing.T) {
 		t.Fatalf("AppendFile (append): %v", err)
 	}
 
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(path) // #nosec G304 — test fixture path under t.TempDir()
 	if err != nil {
 		t.Fatalf("ReadFile after AppendFile: %v", err)
 	}
