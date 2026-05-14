@@ -31,4 +31,31 @@ const (
 	// ErrCodeExecutionFailed is returned when the Engine's execution of
 	// a schematic terminates with an error.
 	ErrCodeExecutionFailed ErrCode = "execution_failed"
+
+	// --- init feature error codes (REQ-EC-01) ---
+
+	// ErrCodeInitDirNotEmpty is returned when the target directory is not empty
+	// and --force was not supplied.
+	ErrCodeInitDirNotEmpty ErrCode = "init_dir_not_empty"
+
+	// ErrCodeInitConfigExists is returned when project-builder.json already
+	// exists in the target directory and --force was not supplied.
+	ErrCodeInitConfigExists ErrCode = "init_config_exists"
+
+	// ErrCodeInitAgentFileAmbiguous is returned when both AGENTS.md and
+	// CLAUDE.md exist in the target directory (selection precedence violated).
+	ErrCodeInitAgentFileAmbiguous ErrCode = "init_agent_file_ambiguous"
+
+	// ErrCodeInitPackageManagerNotFound is returned when no supported package
+	// manager can be detected or resolved for the target directory.
+	ErrCodeInitPackageManagerNotFound ErrCode = "init_package_manager_not_found"
+
+	// ErrCodeInitSkillExists is returned when the SKILL.md artefact already
+	// exists and --force was not supplied.
+	ErrCodeInitSkillExists ErrCode = "init_skill_exists"
+
+	// ErrCodeInitNotImplemented is returned for init sub-features that are
+	// planned but not yet available (e.g. --publishable mode).
+	// Distinct from ErrCodeNotImplemented which is the generic stub sentinel.
+	ErrCodeInitNotImplemented ErrCode = "init_not_implemented"
 )

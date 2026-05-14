@@ -11,17 +11,8 @@ import (
 
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine"
 	apperrors "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/validate"
 )
-
-// shellMetachars is the set of characters forbidden in any SchematicRef field.
-//
-// These are shell metacharacters that, if passed to a shell, would execute
-// arbitrary code. The adapter uses exec.CommandContext (no shell), but we
-// reject them anyway as defence-in-depth: they have no legitimate purpose in
-// a schematic name, collection, or version.
-//
-// Forbidden: $ ` ( ) { } | ; & > < \ " ' \n \r NUL
-const shellMetachars = "$`(){}|;&><\\\"'\n\r\x00"
 
 // validateRef validates a SchematicRef before allowing it to reach cmd.Args.
 //
@@ -60,28 +51,16 @@ func validateRef(ref engine.SchematicRef) error {
 	}
 
 	// REQ-02.3, REQ-05.3: forbid shell metacharacters and NUL byte in all fields.
-	if err := rejectMetachars("Collection", ref.Collection); err != nil {
+	// Delegates to validate.RejectMetachars (promoted from this package in S-005 prep).
+	if err := validate.RejectMetachars("angular.validate_ref", "SchematicRef.Collection", ref.Collection); err != nil {
 		return err
 	}
-	if err := rejectMetachars("Name", ref.Name); err != nil {
+	if err := validate.RejectMetachars("angular.validate_ref", "SchematicRef.Name", ref.Name); err != nil {
 		return err
 	}
-	if err := rejectMetachars("Version", ref.Version); err != nil {
+	if err := validate.RejectMetachars("angular.validate_ref", "SchematicRef.Version", ref.Version); err != nil {
 		return err
 	}
 
-	return nil
-}
-
-// rejectMetachars returns a validation error if s contains any character from
-// shellMetachars. fieldName is used only for the human-readable message.
-func rejectMetachars(fieldName, s string) error {
-	if strings.ContainsAny(s, shellMetachars) {
-		return &apperrors.Error{
-			Code:    apperrors.ErrCodeInvalidInput,
-			Op:      "angular.validate_ref",
-			Message: "SchematicRef." + fieldName + " contains a forbidden character (shell metacharacter or NUL byte)",
-		}
-	}
 	return nil
 }
