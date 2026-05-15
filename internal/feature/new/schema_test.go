@@ -4,6 +4,7 @@
 // REQ coverage:
 //   - REQ-SJ-01: top-level structure has required "inputs" object
 //   - REQ-SJ-03: empty schema {"inputs": {}} is valid minimum
+//   - REQ-SJ-04: reject Angular JSON Schema format on read (properties/$schema:draft-07)
 //   - REQ-SJ-05: canonical bytes: two-space indent, trailing newline
 //   - REQ-SJ-06: type: enum without enum array → ErrSchemaValidation
 //   - REQ-SJ-07: type: list without items.type → ErrSchemaValidation
@@ -317,6 +318,75 @@ func containsStr(s, sub string) bool {
 		}
 		return false
 	}()
+}
+
+// ─── REQ-SJ-04: reject Angular schema shape on read ──────────────────────────
+
+// Test_REQ_SJ04_RejectAngularProperties verifies that ReadSchemaFromBytes returns
+// ErrSchemaValidation when the JSON contains a top-level "properties" field, which
+// is a hallmark of Angular JSON Schema format (REQ-SJ-04).
+func Test_REQ_SJ04_RejectAngularProperties(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"properties": {"foo": {"type": "string"}}}`)
+
+	_, _, err := newfeature.ReadSchemaFromBytes(data)
+	if err == nil {
+		t.Fatal("ReadSchemaFromBytes: expected ErrSchemaValidation for Angular 'properties' field; got nil")
+	}
+	if !errors.Is(err, newfeature.ErrSchemaValidation) {
+		t.Errorf("ReadSchemaFromBytes: error not ErrSchemaValidation; got: %v", err)
+	}
+	if !containsStr(err.Error(), "Angular") && !containsStr(err.Error(), "properties") {
+		t.Errorf("error message does not mention Angular or properties: %q", err.Error())
+	}
+}
+
+// Test_REQ_SJ04_RejectAngularDraft07Schema verifies that ReadSchemaFromBytes returns
+// ErrSchemaValidation when the JSON contains a top-level "$schema" field whose value
+// is the JSON Schema draft-07 URL (REQ-SJ-04).
+func Test_REQ_SJ04_RejectAngularDraft07Schema(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"$schema": "http://json-schema.org/draft-07/schema"}`)
+
+	_, _, err := newfeature.ReadSchemaFromBytes(data)
+	if err == nil {
+		t.Fatal("ReadSchemaFromBytes: expected ErrSchemaValidation for $schema:draft-07; got nil")
+	}
+	if !errors.Is(err, newfeature.ErrSchemaValidation) {
+		t.Errorf("ReadSchemaFromBytes: error not ErrSchemaValidation; got: %v", err)
+	}
+	if !containsStr(err.Error(), "Angular") && !containsStr(err.Error(), "properties") {
+		t.Errorf("error message does not mention Angular or properties: %q", err.Error())
+	}
+}
+
+// Test_REQ_SJ04_AcceptValidSchema verifies that ReadSchemaFromBytes accepts a minimal
+// valid schema {"inputs": {}} without error (REQ-SJ-04 negative — no false positives).
+func Test_REQ_SJ04_AcceptValidSchema(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"inputs": {}}`)
+
+	_, _, err := newfeature.ReadSchemaFromBytes(data)
+	if err != nil {
+		t.Errorf("ReadSchemaFromBytes: unexpected error for valid schema: %v", err)
+	}
+}
+
+// Test_REQ_SJ04_AcceptCustomSchemaURL verifies that ReadSchemaFromBytes accepts a
+// $schema URL that is NOT the draft-07 URL (non-draft-07 $schema is not forbidden).
+// Only the Angular draft-07 URL is rejected; custom $schema URLs pass through.
+func Test_REQ_SJ04_AcceptCustomSchemaURL(t *testing.T) {
+	t.Parallel()
+
+	data := []byte(`{"$schema": "https://schemas.builder/v1.json", "inputs": {}}`)
+
+	_, _, err := newfeature.ReadSchemaFromBytes(data)
+	if err != nil {
+		t.Errorf("ReadSchemaFromBytes: unexpected error for non-draft-07 $schema: %v", err)
+	}
 }
 
 // ─── MarshalCollectionSkeleton (REQ-NC-01) ────────────────────────────────────

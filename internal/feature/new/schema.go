@@ -135,6 +135,20 @@ func checkDefaultType(name string, spec InputSpec) error {
 	return nil
 }
 
+// ReadSchemaFromBytes parses raw JSON bytes into a Schema, enforcing forbidden-field
+// detection (REQ-SJ-04) and BOM stripping (ADV-06).
+//
+// Returns (schema, warnings, error). Error wraps ErrSchemaValidation on:
+//   - Top-level "properties" field detected (Angular JSON Schema format)
+//   - Top-level "$schema" value matching JSON Schema draft-07 URL
+//
+// REQ-SJ-04: reject Angular JSON Schema format on read.
+//
+// TODO: implement Angular detection — this stub is intentionally incomplete (RED).
+func ReadSchemaFromBytes(_ []byte) (Schema, []SchemaValidationWarning, error) {
+	return Schema{}, nil, nil
+}
+
 // utf8BOM is the three-byte UTF-8 byte order mark prefix.
 // Some editors (e.g. Windows Notepad) prepend this to UTF-8 files.
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
