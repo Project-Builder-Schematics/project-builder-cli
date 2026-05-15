@@ -607,6 +607,23 @@ func Test_ADV01_TSReservedWordAsName(t *testing.T) {
 		t.Errorf("ADV-01: schema.d.ts missing interface ClassSchematicInputs; content:\n%s", dtsContent)
 	}
 
+	// REQ-TG-04: verify that tsgen escapes a "class" input property to "class_".
+	// The E2E creates an empty schema, so we test codegen directly here to cover
+	// the reserved-word → property escape path (EscapeIdent + comment per REQ-TG-04).
+	schemaWithClassInput := newfeature.Schema{
+		Inputs: map[string]newfeature.InputSpec{
+			"class": {Type: "string"},
+		},
+	}
+	dtsWithClass, genErr := newfeature.GenerateDTS("widget", schemaWithClassInput)
+	if genErr != nil {
+		t.Fatalf("ADV-01: GenerateDTS with class input: %v", genErr)
+	}
+	dtsWithClassStr := string(dtsWithClass)
+	if !strings.Contains(dtsWithClassStr, "class_") {
+		t.Errorf("ADV-01: tsgen missing escaped property 'class_' for reserved-word input; got:\n%s", dtsWithClassStr)
+	}
+
 	// project-builder.json must have the schematic registered.
 	if len(result.FilesCreated) == 0 {
 		t.Error("ADV-01: no files created")
