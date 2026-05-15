@@ -154,10 +154,25 @@ func (s *Service) checkSchematicConflict(req NewSchematicRequest, collection str
 	return nil
 }
 
+// checkSymlinkSafety rejects schematicDir if it exists and is a symlink whose
+// resolved target is outside the workspace root (ADV-08 / REQ-PJ-01).
+//
+// STUB — always returns nil (allows all symlinks).
+// Test_ADV08_SymlinkOutsideWorkspace WILL FAIL as expected.
+// Real implementation lands in the GREEN commit.
+func (s *Service) checkSymlinkSafety(_, _ string) error {
+	return nil
+}
+
 // writeSchematicFiles creates the schematic directory and writes factory + schema
 // + schema.d.ts files. Returns (schematicDir, factoryPath, schemaPath, dtsPath, error).
 func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (string, string, string, string, error) {
 	schematicDir := filepath.Join(req.WorkDir, "schematics", req.Name)
+
+	// ADV-08: reject symlinks pointing outside the workspace before any writes.
+	if err := s.checkSymlinkSafety(req.WorkDir, schematicDir); err != nil {
+		return "", "", "", "", err
+	}
 	ext := "ts"
 	if lang == "js" {
 		ext = "js"

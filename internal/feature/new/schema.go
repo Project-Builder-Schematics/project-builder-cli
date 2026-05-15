@@ -135,6 +135,21 @@ func checkDefaultType(name string, spec InputSpec) error {
 	return nil
 }
 
+// StripBOM removes a leading UTF-8 BOM (\xEF\xBB\xBF) from data if present.
+// Returns the stripped bytes and a boolean indicating whether a BOM was found.
+//
+// Used by ReadConfig and schema parsing to handle BOM-prefixed files (ADV-06).
+// JSON parsers return an error on the BOM prefix — callers MUST strip before
+// passing to json.Unmarshal.
+//
+// STUB — returns input unchanged; real implementation in the GREEN commit.
+// Tests asserting BOM detection (hadBOM==true) WILL FAIL as expected.
+//
+// Pure function; safe to call on empty or BOM-free input.
+func StripBOM(data []byte) ([]byte, bool) {
+	return data, false
+}
+
 // emptySchema is the typed representation of an empty schema.json v1.
 // The Inputs field uses map[string]any to produce the exact `{}` encoding.
 type emptySchema struct {

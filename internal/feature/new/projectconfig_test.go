@@ -12,12 +12,15 @@
 package newfeature_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	newfeature "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/new"
+	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
@@ -634,5 +637,188 @@ func Test_SchematicExists_PathMode(t *testing.T) {
 	// After registration: must exist.
 	if !newfeature.SchematicExists(cfg, "default", "my-schematic") {
 		t.Error("SchematicExists: returned false after path registration")
+	}
+}
+
+// ─── S-005 Adversarial tests (ADV-06, ADV-07, ADV-08) ────────────────────────
+
+// Test_ADV06_BOMStrippedInSchemaJSON verifies that a schema.json file starting
+// with a UTF-8 BOM is read correctly after BOM stripping (ADV-06).
+//
+// When an existing schema.json has a UTF-8 BOM prefix (\xEF\xBB\xBF),
+// the service must strip it, parse the remaining JSON, and emit a WARN.
+// The BOM must not cause a parse error.
+//
+// Note: ADV-06 is exercised at the projectconfig/service level. The BOM
+// stripping applies to the schema.json read path in ReadSchemaFromBytes
+// (used by --force revalidation). This test exercises the BOM-stripping
+// helper directly and verifies no parse error occurs.
+func Test_ADV06_BOMStrippedInSchemaJSON(t *testing.T) {
+	t.Parallel()
+
+	const validJSON = `{"inputs": {}}`
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	bomJSON := append(bom, []byte(validJSON)...)
+
+	// StripBOM should remove the BOM and return clean JSON.
+	stripped, hadBOM := newfeature.StripBOM(bomJSON)
+	if !hadBOM {
+		t.Error("ADV-06: StripBOM: expected hadBOM=true for BOM-prefixed input")
+	}
+	if string(stripped) != validJSON {
+		t.Errorf("ADV-06: StripBOM: got %q; want %q", stripped, validJSON)
+	}
+
+	// StripBOM on BOM-free input must return original unchanged.
+	clean, hadBOM2 := newfeature.StripBOM([]byte(validJSON))
+	if hadBOM2 {
+		t.Error("ADV-06: StripBOM: expected hadBOM=false for BOM-free input")
+	}
+	if string(clean) != validJSON {
+		t.Errorf("ADV-06: StripBOM: clean input modified; got %q", clean)
+	}
+
+	// Empty input must not panic.
+	empty, _ := newfeature.StripBOM([]byte{})
+	if len(empty) != 0 {
+		t.Errorf("ADV-06: StripBOM: empty input returned non-empty: %q", empty)
+	}
+
+	// Partial BOM (only 2 of 3 bytes) must NOT be stripped.
+	partialBOM := []byte{0xEF, 0xBB, 'x', 'y'}
+	partial, hadPartial := newfeature.StripBOM(partialBOM)
+	if hadPartial {
+		t.Error("ADV-06: StripBOM: partial BOM incorrectly detected as full BOM")
+	}
+	if string(partial) != string(partialBOM) {
+		t.Errorf("ADV-06: StripBOM: partial BOM input was modified unexpectedly")
+	}
+}
+
+// Test_ADV06_BOMInProjectBuilderJSON verifies that ReadConfig handles a
+// project-builder.json with a UTF-8 BOM without error (ADV-06 for the
+// primary config file path).
+func Test_ADV06_BOMInProjectBuilderJSON(t *testing.T) {
+	t.Parallel()
+
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	bomContent := append(bom, []byte(minimalPBJSON)...)
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, string(bomContent), fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ADV-06: ReadConfig with BOM prefix: unexpected error: %v", err)
+	}
+	// version must still be "1" despite BOM.
+	if string(cfg.Version) != `"1"` {
+		t.Errorf("ADV-06: version after BOM strip = %q; want %q", string(cfg.Version), `"1"`)
+	}
+}
+
+// Test_ADV07_ConcurrentWrites verifies that concurrent RegisterSchematic calls
+// do not produce a data race (ADV-07).
+//
+// Multiple goroutines attempt to create "foo" simultaneously. At least one must
+// succeed; losers may get ErrCodeNewSchematicExists (read-check-write race under
+// FakeFS mutex serialization). Neither ErrCodeInvalidInput nor panic is acceptable.
+//
+// The test runs with t.Parallel() and the race detector. The OS-level rename
+// atomicity guarantee is approximated in FakeFS via sync.Mutex serialization.
+func Test_ADV07_ConcurrentWrites(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+
+	const n = 10
+	errCh := make(chan error, n)
+
+	for range n {
+		go func() {
+			svc := newfeature.NewService(fs)
+			_, err := svc.RegisterSchematic(context.Background(), newfeature.NewSchematicRequest{
+				Name:     "foo",
+				Language: "ts",
+				WorkDir:  dir,
+			})
+			errCh <- err
+		}()
+	}
+
+	successCount := 0
+	for range n {
+		err := <-errCh
+		if err == nil {
+			successCount++
+			continue
+		}
+		// Only ErrCodeNewSchematicExists is acceptable for the loser.
+		// ErrCodeInvalidInput would indicate a partial write / logic error.
+		var e *errs.Error
+		if errors.As(err, &e) {
+			if e.Code == errs.ErrCodeNewSchematicExists {
+				continue // acceptable loser result
+			}
+			t.Errorf("ADV-07: unexpected error code %q: %v", e.Code, err)
+		} else {
+			t.Errorf("ADV-07: unexpected non-errs.Error: %T %v", err, err)
+		}
+	}
+
+	if successCount == 0 {
+		t.Error("ADV-07: all concurrent calls failed; expected at least one success")
+	}
+}
+
+// Test_ADV08_SymlinkOutsideWorkspace verifies that a symlinked schematics dir
+// pointing outside the workspace is rejected (ADV-08).
+//
+// Uses FakeFS.AddSymlink to simulate a symlink that resolves outside the
+// workspace root. The handler must detect this via EvalSymlinks check and
+// return ErrCodeInvalidSchematicName (or ErrCodeInvalidInput per spec note).
+//
+// Skip on Windows (symlink semantics differ).
+func Test_ADV08_SymlinkOutsideWorkspace(t *testing.T) {
+	t.Parallel()
+
+	if isWindows() {
+		t.Skip("ADV-08: symlink test skipped on Windows")
+	}
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+
+	// Write project-builder.json.
+	pbPath := filepath.Join(dir, "project-builder.json")
+	if err := fs.WriteFile(pbPath, []byte(minimalPBJSONForE2E), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Register the schematics/foo path as a symlink pointing OUTSIDE the workspace.
+	outsidePath := "/tmp/evil-outside-workspace"
+	schematicPath := filepath.Join(dir, "schematics", "foo")
+	fs.AddSymlink(schematicPath, outsidePath)
+
+	svc := newfeature.NewService(fs)
+	_, err := svc.RegisterSchematic(context.Background(), newfeature.NewSchematicRequest{
+		Name:     "foo",
+		Language: "ts",
+		WorkDir:  dir,
+	})
+
+	// Must reject the symlink target outside workspace.
+	if err == nil {
+		t.Fatal("ADV-08: expected error for symlink outside workspace; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("ADV-08: error not *errs.Error; got: %T %v", err, err)
+	}
+	// Accept ErrCodeInvalidSchematicName or ErrCodeInvalidInput — both indicate rejection.
+	if e.Code != errs.ErrCodeInvalidSchematicName && e.Code != errs.ErrCodeInvalidInput {
+		t.Errorf("ADV-08: unexpected error code %q; want invalid name or invalid input", e.Code)
 	}
 }
