@@ -95,4 +95,9 @@ type NewResult struct {
 
 	// Warnings lists any non-fatal issues encountered during the operation.
 	Warnings []string `json:"warnings,omitempty"`
+
+	// ExtendsUsed is the --extends value that was actually wired into the schematic
+	// registration (either from the flag or from the interactive PromptExtends call).
+	// Empty when no extends was specified or the prompt was skipped.
+	ExtendsUsed string `json:"extends_used,omitempty"`
 }

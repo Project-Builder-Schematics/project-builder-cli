@@ -804,3 +804,75 @@ func Test_ADV10_InlineForceWhenPathExists(t *testing.T) {
 		t.Errorf("ADV-10: code = %q; want %q", e.Code, errs.ErrCodeModeConflict)
 	}
 }
+
+// ─── REQ-EX-04: TUI prompt when interactive + flag absent ─────────────────────
+
+// Test_REQ_EX04_Interactive_PromptExtendsCalled verifies that when the terminal
+// is interactive and --extends is absent, the handler calls PromptExtends and
+// uses the selected value (REQ-EX-04).
+//
+// Strategy: inject SetTTYCheckFn (returns true) + SetPromptExtendsFn (returns
+// a known value). Assert the resulting schematic has extends wired.
+// Currently FAILS because the handler never calls promptExtendsFn.
+func Test_REQ_EX04_Interactive_PromptExtendsCalled(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	// Stub TTY check → interactive.
+	newfeature.SetTTYCheckFn(t, func() bool { return true })
+
+	// Stub extends prompt → returns a known value.
+	const wantExtends = "@scope/pkg:base"
+	newfeature.SetPromptExtendsFn(t, func(_ []string) (string, bool, error) {
+		return wantExtends, false, nil
+	})
+
+	result, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     "my-schematic",
+		Language: "ts",
+		WorkDir:  dir,
+		// Extends is deliberately absent — handler should call PromptExtends.
+	})
+	if err != nil {
+		t.Fatalf("REQ-EX-04: RegisterSchematic: unexpected error: %v", err)
+	}
+
+	// The result must record the extends value from the prompt.
+	if result.ExtendsUsed != wantExtends {
+		t.Errorf("REQ-EX-04: result.ExtendsUsed = %q; want %q (handler must call PromptExtends when interactive)", result.ExtendsUsed, wantExtends)
+	}
+}
+
+// Test_REQ_EX04_NonInteractive_PromptNotCalled verifies that when the terminal
+// is NOT interactive, PromptExtends is NOT called (REQ-EX-05 / REQ-EX-04 boundary).
+func Test_REQ_EX04_NonInteractive_PromptNotCalled(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	// Stub TTY check → non-interactive.
+	newfeature.SetTTYCheckFn(t, func() bool { return false })
+
+	// PromptExtends must NOT be called in non-interactive mode.
+	promptCalled := false
+	newfeature.SetPromptExtendsFn(t, func(_ []string) (string, bool, error) {
+		promptCalled = true
+		return "", true, nil
+	})
+
+	_, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     "my-schematic",
+		Language: "ts",
+		WorkDir:  dir,
+	})
+	if err != nil {
+		t.Fatalf("REQ-EX-04: RegisterSchematic non-interactive: unexpected error: %v", err)
+	}
+
+	if promptCalled {
+		t.Error("REQ-EX-04: PromptExtends was called in non-interactive mode; should be skipped (REQ-EX-05)")
+	}
+}

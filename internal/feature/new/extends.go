@@ -74,6 +74,23 @@ func ValidateExtendsGrammar(value string) error {
 // environments without depending on real stdin state (which varies by shell/CI).
 var ttyCheckFn func() bool
 
+// promptExtendsFn is the package-level extends prompt function.
+// Signature: func(externals []string) (selected string, skipped bool, err error).
+//
+// The default implementation is a V1 stub that always returns skipped=true with
+// a notice WARN (design §9 R-RES-2: full Bubble Tea polish is post-v1).
+// Tests override via SetPromptExtendsFn (export_test.go) to inject deterministic
+// selections (REQ-EX-04 integration test).
+//
+// The function is called by the handler when:
+//   - IsInteractiveTTY() returns true, AND
+//   - the --extends flag is absent
+var promptExtendsFn = func(_ []string) (string, bool, error) {
+	// V1 stub: always skip the extends prompt.
+	// Post-v1: replace with real Bubble Tea list prompt (design §9 R-RES-2).
+	return "", true, nil
+}
+
 // IsInteractiveTTY reports whether os.Stdin is an interactive terminal (TTY).
 // Used to gate the TUI prompt for --extends (REQ-EX-04/05):
 //   - Interactive (true): show TUI prompt listing externals from project-builder.json

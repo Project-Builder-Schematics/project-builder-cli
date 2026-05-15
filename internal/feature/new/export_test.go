@@ -39,6 +39,20 @@ func SetTTYCheckFn(t testing.TB, fn func() bool) {
 	t.Cleanup(func() { ttyCheckFn = orig })
 }
 
+// SetPromptExtendsFn replaces the promptExtendsFn for the duration of t.
+// promptExtendsFn is declared in extends.go (production file).
+//
+// Use this in tests that simulate an interactive TUI extends prompt
+// (REQ-EX-04) without spawning a real Bubble Tea UI.
+//
+// fn signature: func(externals []string) (selected string, skipped bool, err error)
+func SetPromptExtendsFn(t testing.TB, fn func(externals []string) (string, bool, error)) {
+	t.Helper()
+	orig := promptExtendsFn
+	promptExtendsFn = fn
+	t.Cleanup(func() { promptExtendsFn = orig })
+}
+
 // NewOSWriterForTest returns a real-OS FSWriter for use in tests that require
 // actual filesystem mutations (e.g. ADV-09 read-only filesystem test).
 // Tests MUST use t.TempDir() and restore permissions via t.Cleanup.
