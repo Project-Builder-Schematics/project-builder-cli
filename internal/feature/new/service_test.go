@@ -3,16 +3,14 @@
 // REQ coverage:
 //   - REQ-NS-05: dry-run returns DryRun=true result
 //   - REQ-NSI-01: inline mode now implemented (S-002) — stub sentinel test replaced
-//   - REQ-EC-07: collection non-dry-run still returns ErrCodeNewNotImplemented (S-004)
+//   - REQ-NC-06: collection dry-run returns DryRun=true result (S-004 real impl)
 package newfeature_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	newfeature "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/new"
-	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
@@ -77,29 +75,26 @@ func Test_Service_RegisterCollection_DryRun_ReturnsEmptyResult(t *testing.T) {
 	}
 }
 
-// Test_Service_RegisterCollection_NonDryRun_ReturnsErrNewNotImplemented verifies
-// that the S-000b stub returns ErrCodeNewNotImplemented for non-dry-run (REQ-EC-07).
-func Test_Service_RegisterCollection_NonDryRun_ReturnsErrNewNotImplemented(t *testing.T) {
+// Test_Service_RegisterCollection_DryRun_HasPlannedOps verifies that the S-004 real
+// implementation returns DryRun=true with non-empty PlannedOps in dry-run mode (REQ-NC-06).
+// Replaces the S-000b stub sentinel test (ErrCodeNewNotImplemented removed in S-004).
+func Test_Service_RegisterCollection_DryRun_HasPlannedOps(t *testing.T) {
 	t.Parallel()
 
 	svc := newfeature.NewService(fswriter.NewDryRunWriter())
-	req := newfeature.NewCollectionRequest{Name: "my-collection", DryRun: false}
+	req := newfeature.NewCollectionRequest{Name: "my-collection", DryRun: true}
 
-	_, err := svc.RegisterCollection(context.Background(), req)
-	if err == nil {
-		t.Fatal("RegisterCollection(non-dry-run): expected ErrCodeNewNotImplemented, got nil")
+	result, err := svc.RegisterCollection(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RegisterCollection(dry-run): unexpected error: %v", err)
 	}
-
-	sentinel := &errs.Error{Code: errs.ErrCodeNewNotImplemented}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("RegisterCollection: errors.Is(ErrCodeNewNotImplemented) = false; got: %v", err)
+	if result == nil {
+		t.Fatal("RegisterCollection(dry-run): result is nil")
 	}
-
-	var e *errs.Error
-	if !errors.As(err, &e) {
-		t.Fatalf("RegisterCollection: errors.As(*errs.Error) failed; got: %T", err)
+	if !result.DryRun {
+		t.Errorf("RegisterCollection(dry-run): result.DryRun = false; want true")
 	}
-	if e.Op != "new.handler" {
-		t.Errorf("RegisterCollection error Op = %q; want %q", e.Op, "new.handler")
+	if len(result.PlannedOps) == 0 {
+		t.Error("RegisterCollection(dry-run): PlannedOps empty; expected at least 1 op")
 	}
 }

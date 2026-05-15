@@ -1,21 +1,19 @@
-// Package newfeature — handler_test.go covers the stub handler smoke behaviour.
+// Package newfeature — handler_test.go covers handler smoke behaviour.
 //
 // REQ coverage:
-//   - REQ-EC-07: handlers return ErrCodeNewNotImplemented via Renderer (stub sentinel)
 //   - REQ-AL-01..03: aliases s/c wired + help shows aliases (covered via command_test.go)
 //   - REQ-NS-05 (partial): --dry-run flag is registered and recognised
+//   - REQ-NC-06 (partial): collection --dry-run returns result (handler smoke)
 //
 // NOTE: Full command alias and --help tests live in command_test.go (Task F).
 // This file covers handler RunE behaviour in isolation.
 package newfeature
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/spf13/cobra"
 
-	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
@@ -60,22 +58,18 @@ func Test_HandleSchematic_DryRun_ReturnsDryRunResult(t *testing.T) {
 	}
 }
 
-// Test_HandleCollection_ReturnsErrNewNotImplemented verifies the collection handler
-// returns ErrCodeNewNotImplemented when called (stub S-000b).
-// REQ-EC-07.
-func Test_HandleCollection_ReturnsErrNewNotImplemented(t *testing.T) {
+// Test_HandleCollection_DryRun_ReturnsResult verifies the collection handler
+// returns a valid result in dry-run mode after S-004 implements RegisterCollection.
+// Replaces the S-000b stub sentinel test (REQ-EC-07: stub removed in S-004).
+func Test_HandleCollection_DryRun_ReturnsResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService()
 	cmd := newCollectionCmd()
-	err := handleCollection(svc)(cmd, []string{"my-collection"}, false, false)
-	if err == nil {
-		t.Fatal("handleCollection: expected error, got nil")
-	}
-
-	sentinel := &errs.Error{Code: errs.ErrCodeNewNotImplemented}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("handleCollection: errors.Is(ErrCodeNewNotImplemented) = false; got: %v", err)
+	// Pass dryRun=true so no project-builder.json read is attempted.
+	err := handleCollection(svc)(cmd, []string{"my-collection"}, true, false)
+	if err != nil {
+		t.Errorf("handleCollection(dry-run): unexpected error: %v", err)
 	}
 }
 
