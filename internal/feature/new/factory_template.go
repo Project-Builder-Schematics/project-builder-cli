@@ -32,6 +32,12 @@ var factoryTSTmpl string
 //go:embed stub_templates/factory.js.tmpl
 var factoryJSTmpl string
 
+//go:embed stub_templates/add_factory.ts.tmpl
+var addFactoryTSTmpl string
+
+//go:embed stub_templates/remove_factory.ts.tmpl
+var removeFactoryTSTmpl string
+
 // factoryTemplateFuncs provides simple string helpers for factory templates.
 // These are NOT for TS identifier escaping (that is tsident's job) — they are
 // just for rendering readable stub function names in the template comments and
@@ -68,6 +74,59 @@ var factoryTemplateFuncs = template.FuncMap{
 		}
 		return sb.String()
 	},
+}
+
+// LoadLifecycleTemplate returns the raw template string for the given lifecycle
+// stage ("add" or "remove"). Only TypeScript is supported for lifecycle stubs
+// (REQ-NCP-01 — publishable collections always use .ts).
+//
+// Returns ErrCodeInvalidInput for unknown lifecycle stages.
+func LoadLifecycleTemplate(stage string) (string, error) {
+	switch stage {
+	case "add":
+		return addFactoryTSTmpl, nil
+	case "remove":
+		return removeFactoryTSTmpl, nil
+	default:
+		return "", &errs.Error{
+			Code:    errs.ErrCodeInvalidInput,
+			Op:      "factory_template.loadLifecycle",
+			Message: "unknown lifecycle stage '" + stage + "'; valid values: add, remove",
+		}
+	}
+}
+
+// RenderLifecycleTemplate renders the lifecycle stub template for the given stage
+// and collection name substituted.
+//
+// Returns ErrCodeInvalidInput for unsupported stages.
+func RenderLifecycleTemplate(stage, collectionName string) ([]byte, error) {
+	raw, err := LoadLifecycleTemplate(stage)
+	if err != nil {
+		return nil, err
+	}
+
+	tmpl, err := template.New("lifecycle-" + stage).Funcs(factoryTemplateFuncs).Parse(raw)
+	if err != nil {
+		return nil, &errs.Error{
+			Code:    errs.ErrCodeInvalidInput,
+			Op:      "factory_template.renderLifecycle",
+			Message: "failed to parse lifecycle template for stage '" + stage + "'",
+			Cause:   err,
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, factoryData{Name: collectionName}); err != nil {
+		return nil, &errs.Error{
+			Code:    errs.ErrCodeInvalidInput,
+			Op:      "factory_template.renderLifecycle",
+			Message: "failed to render lifecycle template for '" + collectionName + "/" + stage + "'",
+			Cause:   err,
+		}
+	}
+
+	return buf.Bytes(), nil
 }
 
 // LoadFactoryTemplate returns the raw template string for the given language.
