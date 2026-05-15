@@ -20,6 +20,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	newfeature "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/new"
@@ -831,9 +832,12 @@ func Test_ADV10_InlineForceWhenPathExists(t *testing.T) {
 // Strategy: inject SetTTYCheckFn (returns true) + SetPromptExtendsFn (returns
 // a known value). Assert the resulting schematic has extends wired.
 // Currently FAILS because the handler never calls promptExtendsFn.
+//
+// NOT parallel: this test installs conflicting global seams (ttyCheckFn=true,
+// promptExtendsFn=closure). Running in parallel with other tests that call
+// RegisterSchematic would cause those tests to invoke this test's closure —
+// a data race and a logical failure. Sequential execution guarantees isolation.
 func Test_REQ_EX04_Interactive_PromptExtendsCalled(t *testing.T) {
-	t.Parallel()
-
 	dir, fs := setupE2EWorkspace(t)
 	svc := newfeature.NewService(fs)
 
@@ -893,9 +897,15 @@ func Test_ADV13_MaxLengthName_255chars(t *testing.T) {
 
 // Test_REQ_EX04_NonInteractive_PromptNotCalled verifies that when the terminal
 // is NOT interactive, PromptExtends is NOT called (REQ-EX-05 / REQ-EX-04 boundary).
+//
+// NOT parallel: this test installs global seams (ttyCheckFn, promptExtendsFn)
+// that conflict with other tests calling RegisterSchematic in parallel. If run
+// concurrently, another goroutine could invoke this test's closure and write to
+// promptCalled from a foreign goroutine — a data race. Sequential execution
+// (no t.Parallel) guarantees the seams are only active during this test's window.
+// promptCalled uses atomic.Bool as defense-in-depth against any future
+// re-parallelisation.
 func Test_REQ_EX04_NonInteractive_PromptNotCalled(t *testing.T) {
-	t.Parallel()
-
 	dir, fs := setupE2EWorkspace(t)
 	svc := newfeature.NewService(fs)
 
@@ -903,9 +913,10 @@ func Test_REQ_EX04_NonInteractive_PromptNotCalled(t *testing.T) {
 	newfeature.SetTTYCheckFn(t, func() bool { return false })
 
 	// PromptExtends must NOT be called in non-interactive mode.
-	promptCalled := false
+	// atomic.Bool: race-safe if the closure is ever invoked by a concurrent goroutine.
+	var promptCalled atomic.Bool
 	newfeature.SetPromptExtendsFn(t, func(_ []string) (string, bool, error) {
-		promptCalled = true
+		promptCalled.Store(true)
 		return "", true, nil
 	})
 
@@ -918,7 +929,7 @@ func Test_REQ_EX04_NonInteractive_PromptNotCalled(t *testing.T) {
 		t.Fatalf("REQ-EX-04: RegisterSchematic non-interactive: unexpected error: %v", err)
 	}
 
-	if promptCalled {
+	if promptCalled.Load() {
 		t.Error("REQ-EX-04: PromptExtends was called in non-interactive mode; should be skipped (REQ-EX-05)")
 	}
 }
