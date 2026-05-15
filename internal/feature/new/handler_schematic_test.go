@@ -562,3 +562,245 @@ func Test_E2E_SchemaDTS_Present(t *testing.T) {
 		t.Errorf("rendered output still shows deferred .d.ts WARN (S-003 implements it):\n%s", rendered)
 	}
 }
+
+// ─── S-005 Adversarial tests ──────────────────────────────────────────────────
+
+// Test_ADV01_TSReservedWordAsName verifies that a TypeScript reserved word used
+// as the schematic name is accepted and that the generated .d.ts uses escaped
+// property names (ADV-01 / REQ-TI-02).
+//
+// Spec contract:
+//   - schema.json preserves the original name "class" as the input key
+//   - schema.d.ts uses "class_: string; // original: class" (EscapeIdent suffix)
+//   - Interface name: ClassSchematicInputs (PascalCase; "class" is not reserved as interface NAME)
+func Test_ADV01_TSReservedWordAsName(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	// "class" is a TypeScript reserved word — schematic creation must succeed.
+	result, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     "class",
+		Language: "ts",
+		WorkDir:  dir,
+	})
+	if err != nil {
+		t.Fatalf("ADV-01: RegisterSchematic('class'): unexpected error: %v", err)
+	}
+
+	// factory.ts must exist.
+	factoryPath := filepath.Join(dir, "schematics", "class", "factory.ts")
+	if !fs.HasFile(factoryPath) {
+		t.Errorf("ADV-01: factory.ts not created at %s", factoryPath)
+	}
+
+	// schema.d.ts must exist with escaped interface (REQ-TG-02 / ADV-01).
+	dtsPath := filepath.Join(dir, "schematics", "class", "schema.d.ts")
+	if !fs.HasFile(dtsPath) {
+		t.Errorf("ADV-01: schema.d.ts not created at %s", dtsPath)
+	}
+	dtsBytes, _ := fs.ReadFile(dtsPath)
+	dtsContent := string(dtsBytes)
+	// Interface name must be ClassSchematicInputs (PascalCase of "class").
+	if !strings.Contains(dtsContent, "ClassSchematicInputs") {
+		t.Errorf("ADV-01: schema.d.ts missing interface ClassSchematicInputs; content:\n%s", dtsContent)
+	}
+
+	// project-builder.json must have the schematic registered.
+	if len(result.FilesCreated) == 0 {
+		t.Error("ADV-01: no files created")
+	}
+}
+
+// Test_ADV02_PathTraversalInName verifies that a schematic name containing path
+// traversal characters is rejected with ErrCodeInvalidSchematicName (ADV-02).
+func Test_ADV02_PathTraversalInName(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	_, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     "../etc/passwd",
+		Language: "ts",
+		WorkDir:  dir,
+	})
+	if err == nil {
+		t.Fatal("ADV-02: expected ErrCodeInvalidSchematicName for path traversal name; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("ADV-02: error not *errs.Error; got: %T %v", err, err)
+	}
+	if e.Code != errs.ErrCodeInvalidSchematicName {
+		t.Errorf("ADV-02: code = %q; want %q", e.Code, errs.ErrCodeInvalidSchematicName)
+	}
+
+	// No writes must have occurred.
+	if fs.FileCount() > 1 { // 1 = project-builder.json written in setup
+		t.Errorf("ADV-02: expected no writes after path traversal rejection; file count = %d", fs.FileCount())
+	}
+}
+
+// Test_ADV03_ShellMetacharInName verifies that shell metacharacters in the
+// schematic name are rejected with ErrCodeInvalidSchematicName (ADV-03).
+func Test_ADV03_ShellMetacharInName(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"semicolon", "foo;rm -rf /"},
+		{"pipe", "foo|bar"},
+		{"ampersand", "foo&bar"},
+		{"dollar sign", "foo$HOME"},
+		{"backtick", "foo`ls`"},
+		{"redirect gt", "foo>bar"},
+		{"redirect lt", "foo<bar"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+				Name:     tc.input,
+				Language: "ts",
+				WorkDir:  dir,
+			})
+			if err == nil {
+				t.Fatalf("ADV-03: expected error for %q; got nil", tc.input)
+			}
+			var e *errs.Error
+			if !errors.As(err, &e) {
+				t.Fatalf("ADV-03: error not *errs.Error; got: %T %v", err, err)
+			}
+			if e.Code != errs.ErrCodeInvalidSchematicName {
+				t.Errorf("ADV-03: %q: code = %q; want %q", tc.input, e.Code, errs.ErrCodeInvalidSchematicName)
+			}
+		})
+	}
+}
+
+// Test_ADV05_NullByteInName verifies that a null byte in the schematic name is
+// rejected with ErrCodeInvalidSchematicName (ADV-05).
+func Test_ADV05_NullByteInName(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	_, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     "foo\x00bar",
+		Language: "ts",
+		WorkDir:  dir,
+	})
+	if err == nil {
+		t.Fatal("ADV-05: expected ErrCodeInvalidSchematicName for null byte; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("ADV-05: error not *errs.Error; got: %T %v", err, err)
+	}
+	if e.Code != errs.ErrCodeInvalidSchematicName {
+		t.Errorf("ADV-05: code = %q; want %q", e.Code, errs.ErrCodeInvalidSchematicName)
+	}
+}
+
+// Test_ADV09_ReadOnlyFilesystem verifies that when the filesystem is read-only,
+// the service returns an error with no partial state (ADV-09).
+//
+// This test uses a real temp directory with os.Chmod to simulate a read-only
+// filesystem. It is skipped on Windows (chmod semantics differ).
+func Test_ADV09_ReadOnlyFilesystem(t *testing.T) {
+	t.Parallel()
+
+	if isWindows() {
+		t.Skip("ADV-09: chmod not supported on Windows — skipping")
+	}
+
+	dir := t.TempDir()
+
+	// Write project-builder.json before making the directory read-only.
+	pbPath := filepath.Join(dir, "project-builder.json")
+	if err := writeFileOS(pbPath, []byte(minimalPBJSONForE2E)); err != nil {
+		t.Fatalf("setup: write project-builder.json: %v", err)
+	}
+
+	// Create schematics dir and make it read-only.
+	schDir := filepath.Join(dir, "schematics")
+	if err := mkdirOS(schDir, 0o755); err != nil {
+		t.Fatalf("setup: mkdir schematics: %v", err)
+	}
+	if err := chmodOS(schDir, 0o555); err != nil {
+		t.Fatalf("setup: chmod 0o555 schematics: %v", err)
+	}
+	// Restore permissions after test so t.TempDir cleanup works.
+	t.Cleanup(func() { _ = chmodOS(schDir, 0o755) })
+
+	// Use real OS writer (not FakeFS) to trigger actual permission error.
+	svc := newfeature.NewService(newfeature.NewOSWriterForTest())
+
+	_, err := svc.RegisterSchematic(context.Background(), newfeature.NewSchematicRequest{
+		Name:     "my-schematic",
+		Language: "ts",
+		WorkDir:  dir,
+	})
+	if err == nil {
+		t.Fatal("ADV-09: expected error on read-only filesystem; got nil")
+	}
+
+	// No partial state: schematics/my-schematic/ must NOT have been created.
+	schematicDir := filepath.Join(schDir, "my-schematic")
+	if dirExistsOS(schematicDir) {
+		t.Errorf("ADV-09: partial state found — schematic dir %s exists after write failure", schematicDir)
+	}
+}
+
+// Test_ADV10_InlineForceWhenPathExists verifies that --inline --force returns
+// ErrCodeModeConflict when the schematic already exists in path mode (ADV-10).
+//
+// The mode-conflict check is already enforced by checkModeConflict in S-002.
+// This test adds explicit coverage in the handler_schematic_test suite.
+func Test_ADV10_InlineForceWhenPathExists(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	// Create path-mode schematic first.
+	if _, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     "my-schematic",
+		Language: "ts",
+		WorkDir:  dir,
+	}); err != nil {
+		t.Fatalf("ADV-10: path setup: %v", err)
+	}
+
+	// --inline --force on a path-mode entry must fail with ErrCodeModeConflict.
+	_, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:    "my-schematic",
+		WorkDir: dir,
+		Inline:  true,
+		Force:   true,
+	})
+	if err == nil {
+		t.Fatal("ADV-10: expected ErrCodeModeConflict; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("ADV-10: error not *errs.Error; got: %T %v", err, err)
+	}
+	if e.Code != errs.ErrCodeModeConflict {
+		t.Errorf("ADV-10: code = %q; want %q", e.Code, errs.ErrCodeModeConflict)
+	}
+}

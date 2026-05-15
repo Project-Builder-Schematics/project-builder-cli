@@ -8,7 +8,11 @@
 // slices (S-005 language auto-detection). Additional seams are added as needed.
 package newfeature
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
+)
 
 // SetLanguageDetectFn replaces the languageDetectFn for the duration of t.
 // languageDetectFn is declared in language.go (production file) so it is
@@ -33,4 +37,11 @@ func SetTTYCheckFn(t testing.TB, fn func() bool) {
 	orig := ttyCheckFn
 	ttyCheckFn = fn
 	t.Cleanup(func() { ttyCheckFn = orig })
+}
+
+// NewOSWriterForTest returns a real-OS FSWriter for use in tests that require
+// actual filesystem mutations (e.g. ADV-09 read-only filesystem test).
+// Tests MUST use t.TempDir() and restore permissions via t.Cleanup.
+func NewOSWriterForTest() fswriter.FSWriter {
+	return fswriter.NewOSWriter()
 }
