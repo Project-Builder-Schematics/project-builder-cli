@@ -13,11 +13,30 @@ import (
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 )
 
+// CheckPublishableInlineConflict returns ErrCodeModeConflict when publishable and
+// inline flags are both true (REQ-NCP-03 / REQ-EC-05 mode-conflict guard).
+//
+// Called by handler_collection.go before dispatching to RegisterCollection.
+func CheckPublishableInlineConflict(publishable, inline bool) error {
+	if publishable && inline {
+		return &errs.Error{
+			Code:    errs.ErrCodeModeConflict,
+			Op:      "new.preflight",
+			Message: "--publishable cannot be combined with --inline; publishable collections require file-system layout.",
+			Suggestions: []string{
+				"omit --inline to create a publishable collection with lifecycle stubs",
+				"omit --publishable to create an inline collection (no lifecycle stubs)",
+			},
+		}
+	}
+	return nil
+}
+
 // createPublishableCollection implements the --publishable collection creation flow.
 // It writes collection.json + add/ and remove/ lifecycle stubs, then mutates
 // project-builder.json with the collection path.
 func (s *Service) createPublishableCollection(_ context.Context, _ NewCollectionRequest) (*NewResult, error) {
-	// Stub — implementation follows in Task E (RED phase keeps it as not-implemented).
+	// Stub — implementation follows in Task E GREEN commit.
 	return nil, &errs.Error{
 		Code:    errs.ErrCodeNewNotImplemented,
 		Op:      "new.createPublishableCollection",
