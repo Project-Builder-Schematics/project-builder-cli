@@ -130,6 +130,16 @@ Run 'builder <command> --help' for command-specific usage.`,
 	}, nil
 }
 
+// exitCodeForErr maps an error from fang.Execute to a process exit code.
+// Stub: always returns 1 — real implementation in GREEN commit.
+// Returns 0 for nil (defensive; main never calls this for nil).
+func exitCodeForErr(err error) int {
+	if err == nil {
+		return 0
+	}
+	return 1
+}
+
 func main() {
 	// Extract --output flag value before calling composeApp.
 	// We use pflag directly on a temporary FlagSet so the factory receives
