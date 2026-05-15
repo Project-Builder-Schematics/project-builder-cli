@@ -20,12 +20,14 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/info"
 	initialise "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init"
 	inittemplate "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init/template"
+	newfeature "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/new"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/remove"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/skill"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/sync"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/validate"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine/angular"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render"
 )
 
@@ -100,11 +102,17 @@ Run 'builder <command> --help' for command-specific usage.`,
 	// initFS is osFS (real writes); in dry-run mode the handler swaps to dryRunFS.
 	// initPM is the PackageManagerRunner stub (real impl lands in S-005).
 	// inittemplate.Skill holds the locked v0 SKILL.md bytes bundled via //go:embed (ADR-022, S-002).
-	initFS := initialise.NewOSWriter()
+	// NOTE: switched from initialise.NewOSWriter() to fswriter.NewOSWriter() (S-000b, shared promotion).
+	initFS := fswriter.NewOSWriter()
 	initPM := initialise.NewRealPM()
 	initSvc := initialise.NewService(initFS, initPM, inittemplate.Skill)
 
-	// Register all 8 leaf commands (cobra-command-tree.REQ-01.1).
+	// New feature wiring (S-000b).
+	// newFS is osFS; in dry-run mode the handler swaps to dryRunFS per request.
+	newFS := fswriter.NewOSWriter()
+	newSvc := newfeature.NewService(newFS)
+
+	// Register all commands (cobra-command-tree.REQ-01.1).
 	root.AddCommand(initialise.NewCommand(initSvc)) // init
 	root.AddCommand(execute.NewCommand())           // execute
 	root.AddCommand(add.NewCommand())               // add
@@ -113,6 +121,7 @@ Run 'builder <command> --help' for command-specific usage.`,
 	root.AddCommand(validate.NewCommand())          // validate
 	root.AddCommand(remove.NewCommand())            // remove
 	root.AddCommand(skill.NewCommand())             // skill (parent; skill update is its leaf)
+	root.AddCommand(newfeature.NewCommand(newSvc))  // new (parent; schematic + collection leaves)
 
 	return &App{
 		Engine:   eng,
