@@ -14,8 +14,9 @@ import (
 
 // RenderPretty writes a human-readable representation of result to w.
 // Dry-run mode emits a "DRY RUN" header followed by planned operations.
-// Real-write mode emits created files (stub: empty in S-000b).
+// Real-write mode emits created files. Warnings are always emitted last.
 //
+// ADR-019: ALL user-facing output goes through Renderer — never fmt.Println.
 // fmt.Fprintf/Fprintln errors are intentionally discarded — a failing write
 // would surface elsewhere and we don't want it to mask the service outcome.
 func RenderPretty(w io.Writer, result NewResult) {
@@ -30,12 +31,16 @@ func RenderPretty(w io.Writer, result NewResult) {
 				_, _ = fmt.Fprintf(w, "  Would %s: %s\n", op.Op, op.Path)
 			}
 		}
-		return
+	} else {
+		// Real-write mode — list created files.
+		for _, p := range result.FilesCreated {
+			_, _ = fmt.Fprintf(w, "  Created: %s\n", p)
+		}
 	}
 
-	// Real-write mode — list created files (populated in S-001/S-004).
-	for _, p := range result.FilesCreated {
-		_, _ = fmt.Fprintf(w, "  Created: %s\n", p)
+	// Warnings are always rendered, regardless of dry-run mode (ADR-019).
+	for _, warn := range result.Warnings {
+		_, _ = fmt.Fprintf(w, "warning: %s\n", warn)
 	}
 }
 
