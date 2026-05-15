@@ -1,8 +1,8 @@
 // Package newfeature — service_test.go covers service-level contracts.
 //
-// REQ coverage (S-001 updates these from stub to real behaviour):
+// REQ coverage:
 //   - REQ-NS-05: dry-run returns DryRun=true result
-//   - REQ-EC-07: inline mode still returns ErrCodeNewNotImplemented (stub sentinel, S-002)
+//   - REQ-NSI-01: inline mode now implemented (S-002) — stub sentinel test replaced
 //   - REQ-EC-07: collection non-dry-run still returns ErrCodeNewNotImplemented (S-004)
 package newfeature_test
 
@@ -36,22 +36,24 @@ func Test_Service_RegisterSchematic_DryRun_ReturnsResult(t *testing.T) {
 	}
 }
 
-// Test_Service_RegisterSchematic_Inline_ReturnsErrNotImplemented verifies that
-// --inline still returns ErrCodeNewNotImplemented (S-002 stub, REQ-EC-07).
-func Test_Service_RegisterSchematic_Inline_ReturnsErrNotImplemented(t *testing.T) {
+// Test_Service_RegisterSchematic_Inline_DryRun_ReturnsResult verifies that
+// --inline --dry-run returns a valid DryRun result (REQ-NSI-01, S-002 implemented).
+// The stub sentinel test (ErrCodeNewNotImplemented) is replaced now that inline is live.
+func Test_Service_RegisterSchematic_Inline_DryRun_ReturnsResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newfeature.NewService(fswriter.NewDryRunWriter())
-	req := newfeature.NewSchematicRequest{Name: "my-schematic", Inline: true}
+	req := newfeature.NewSchematicRequest{Name: "my-schematic", Inline: true, DryRun: true}
 
-	_, err := svc.RegisterSchematic(context.Background(), req)
-	if err == nil {
-		t.Fatal("RegisterSchematic(inline): expected ErrCodeNewNotImplemented, got nil")
+	result, err := svc.RegisterSchematic(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RegisterSchematic(inline, dry-run): unexpected error: %v", err)
 	}
-
-	sentinel := &errs.Error{Code: errs.ErrCodeNewNotImplemented}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("RegisterSchematic(inline): errors.Is(ErrCodeNewNotImplemented) = false; got: %v", err)
+	if result == nil {
+		t.Fatal("RegisterSchematic(inline, dry-run): result is nil")
+	}
+	if !result.DryRun {
+		t.Errorf("RegisterSchematic(inline, dry-run): result.DryRun = false; want true")
 	}
 }
 
