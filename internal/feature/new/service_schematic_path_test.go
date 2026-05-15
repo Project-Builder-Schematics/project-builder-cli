@@ -253,6 +253,50 @@ func Test_RegisterSchematic_DryRun(t *testing.T) {
 	}
 }
 
+// Test_RegisterSchematic_HappyPath_WritesSchemaDTO verifies that path-mode creates
+// schema.d.ts alongside factory.ts and schema.json (REQ-TG-01, S-003 wire-in).
+func Test_RegisterSchematic_HappyPath_WritesSchemaDTO(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	req := newfeature.NewSchematicRequest{
+		Name:       "my-schematic",
+		Collection: "default",
+		Language:   "ts",
+		WorkDir:    dir,
+	}
+
+	result, err := svc.RegisterSchematic(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RegisterSchematic: unexpected error: %v", err)
+	}
+
+	// schema.d.ts must be created (REQ-TG-01).
+	dtsPath := filepath.Join(dir, "schematics", "my-schematic", "schema.d.ts")
+	if !fs.HasFile(dtsPath) {
+		t.Errorf("schema.d.ts not created at %s", dtsPath)
+	}
+
+	// Content must include the interface declaration (REQ-TG-02).
+	dtsBytes, _ := fs.ReadFile(dtsPath)
+	if !strings.Contains(string(dtsBytes), "MySchematicSchematicInputs") {
+		t.Errorf("schema.d.ts missing interface name; content:\n%s", dtsBytes)
+	}
+
+	// schema.d.ts must be in FilesCreated (REQ-NS-01).
+	foundDts := false
+	for _, f := range result.FilesCreated {
+		if strings.HasSuffix(f, "schema.d.ts") {
+			foundDts = true
+		}
+	}
+	if !foundDts {
+		t.Errorf("schema.d.ts not listed in result.FilesCreated; got: %v", result.FilesCreated)
+	}
+}
+
 // Test_RegisterSchematic_InvalidName_MetaChar verifies that shell metachar in name
 // returns ErrCodeInvalidSchematicName (REQ-NS-04).
 func Test_RegisterSchematic_InvalidName_MetaChar(t *testing.T) {
