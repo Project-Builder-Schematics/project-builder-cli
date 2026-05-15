@@ -5,6 +5,7 @@
 //   - REQ-SJ-01: top-level structure with required "inputs" object
 //   - REQ-SJ-02: InputSpec fields and type enum
 //   - REQ-SJ-03: empty schema {"inputs": {}} is a valid minimum
+//   - REQ-SJ-04: reject Angular JSON Schema format on read (properties/$schema:draft-07)
 //   - REQ-SJ-05: canonical byte sequence (two-space indent, trailing newline)
 //   - REQ-SJ-06: enum without values → ErrSchemaValidation
 //   - REQ-SJ-07: list without items.type → ErrSchemaValidation
@@ -135,18 +136,73 @@ func checkDefaultType(name string, spec InputSpec) error {
 	return nil
 }
 
+// angularDraft07URL is the JSON Schema draft-07 URL used by Angular CLI schematics.
+// Its presence at the top level of schema.json indicates Angular format, not builder format.
+const angularDraft07URL = "http://json-schema.org/draft-07/schema"
+
+// angularSchemaMsg is the user-facing message for REQ-SJ-04 Angular detection.
+// Stored as a constant so the lint suppression is in one place.
+//
+//nolint:revive,staticcheck // spec-mandated format: sentence-style with trailing period is intentional
+const angularSchemaMsg = "schema.json: detected Angular JSON Schema format (has 'properties' field). This is not a builder schema.json. See docs for migration."
+
+// angularSchemaErr returns the REQ-SJ-04 sentinel error for Angular schema detection.
+func angularSchemaErr() error {
+	return fmt.Errorf("%w: %s", ErrSchemaValidation, angularSchemaMsg)
+}
+
 // ReadSchemaFromBytes parses raw JSON bytes into a Schema, enforcing forbidden-field
 // detection (REQ-SJ-04) and BOM stripping (ADV-06).
 //
 // Returns (schema, warnings, error). Error wraps ErrSchemaValidation on:
 //   - Top-level "properties" field detected (Angular JSON Schema format)
-//   - Top-level "$schema" value matching JSON Schema draft-07 URL
+//   - Top-level "$schema" value matching the JSON Schema draft-07 URL
+//
+// Non-draft-07 "$schema" URLs are not forbidden — only the Angular draft-07 URL is rejected.
+// Unknown top-level fields (other than the forbidden ones) produce warnings via ValidateSchema.
 //
 // REQ-SJ-04: reject Angular JSON Schema format on read.
-//
-// TODO: implement Angular detection — this stub is intentionally incomplete (RED).
-func ReadSchemaFromBytes(_ []byte) (Schema, []SchemaValidationWarning, error) {
-	return Schema{}, nil, nil
+// ADV-06: strip UTF-8 BOM before parsing.
+func ReadSchemaFromBytes(data []byte) (Schema, []SchemaValidationWarning, error) {
+	// ADV-06: strip UTF-8 BOM if present.
+	data, _ = StripBOM(data)
+
+	// First pass: decode into raw map to inspect top-level keys without
+	// committing to the Schema struct layout. This lets us reject Angular
+	// format before any Schema fields are populated.
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return Schema{}, nil, fmt.Errorf("%w: failed to parse schema.json: %w", ErrSchemaValidation, err)
+	}
+
+	// REQ-SJ-04: reject top-level "properties" (Angular JSON Schema shape).
+	if _, hasProperties := rawMap["properties"]; hasProperties {
+		return Schema{}, nil, angularSchemaErr()
+	}
+
+	// REQ-SJ-04: reject "$schema" matching the Angular draft-07 URL.
+	if schemaURLRaw, hasSchemaURL := rawMap["$schema"]; hasSchemaURL {
+		var schemaURL string
+		if err := json.Unmarshal(schemaURLRaw, &schemaURL); err == nil {
+			if schemaURL == angularDraft07URL {
+				return Schema{}, nil, angularSchemaErr()
+			}
+		}
+	}
+
+	// Second pass: unmarshal into the typed Schema struct.
+	var s Schema
+	if err := json.Unmarshal(data, &s); err != nil {
+		return Schema{}, nil, fmt.Errorf("%w: failed to decode schema.json: %w", ErrSchemaValidation, err)
+	}
+
+	// Run structural validation (REQ-SJ-06..10).
+	warns, err := ValidateSchema(s)
+	if err != nil {
+		return Schema{}, warns, err
+	}
+
+	return s, warns, nil
 }
 
 // utf8BOM is the three-byte UTF-8 byte order mark prefix.
