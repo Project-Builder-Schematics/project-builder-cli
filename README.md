@@ -54,9 +54,11 @@ Pre-`v1.0` — repository is being bootstrapped slice by slice via SDD. No insta
 | Phase 2 — Architectural skeleton | ✅ Done (PR #12) |
 | Phase 3 — Renderer adapters (pretty + JSON) | ✅ Done (PR #13) |
 | Phase 3 — AngularSubprocessAdapter | ✅ Done (PR #14) |
-| **Phase 4 — `builder init` end-to-end** | **✅ Done (PR #17)** |
-| Phase 5 — `builder execute` end-to-end | 📋 Next |
-| Phases 6..17 — remaining commands + npm distribution | 📋 Backlog |
+| Phase 4 — `builder init` end-to-end | ✅ Done (PR #17) |
+| Phase 4.5 — CLI versioning automation (auto-bump on merge) | ✅ Done (PR #21) |
+| **Phase 5 — `builder new` (schematic + collection scaffolding)** | **✅ Done (PR #22, v0.1.0)** |
+| Phase 6 — `builder execute` end-to-end | 📋 Next |
+| Phases 7..17 — remaining commands + npm distribution | 📋 Backlog |
 
 See [ROADMAP.md](./ROADMAP.md) for the full breakdown.
 
@@ -91,9 +93,9 @@ The canonical inventory lives in [Discussion #3](https://github.com/Project-Buil
 |---|---|---|
 | **`builder init`** | ✅ **Available** | Initialise a Project Builder workspace in the current repo |
 | `builder execute` (`e`, `generate`, `g`) | 📋 Pending | Run a schematic against the current project |
-| `builder new schematic` (`s`) | 📋 Pending | Scaffold a new local schematic |
-| `builder new collection` (`c`) | 📋 Pending | Scaffold a new local collection |
-| `builder generate-types` | 📋 Pending | Generate `.d.ts` from simplified `schema.json` |
+| **`builder new schematic`** (alias `s`) | ✅ **Available** | Scaffold a new local schematic (path mode + `--inline`); auto-generates `.d.ts` types |
+| **`builder new collection`** (alias `c`) | ✅ **Available** | Scaffold a new local collection (with optional `--publishable` lifecycle stubs) |
+| `builder generate-types` | ⚠️ Auto-only | TS type emission runs inline inside `builder new schematic`; standalone command pending |
 | `builder add` | 📋 Pending | Register an externally published collection |
 | `builder create` | 📋 Pending | Scaffold a new project from scratch (templates) |
 | `builder migrate` | 📋 Pending | Transform a project between modes/versions/adapters |
@@ -234,6 +236,198 @@ Every error includes a structured `code`, a human-readable `message`, and a non-
 
 ---
 
+## `builder new` — full reference
+
+`builder new` is a parent command with two leaves: `builder new schematic <name>` and `builder new collection <name>`. Both operate on the workspace anchored by `project-builder.json` (created by `builder init`). CLI-only — does not call any engine.
+
+### Synopsis
+
+```
+builder new schematic <name> [flags]
+builder new s <name> [flags]                    # alias
+
+builder new collection <name> [flags]
+builder new c <name> [flags]                    # alias
+```
+
+`<name>` is mandatory and validated against shell metacharacters, path separators, null bytes, and reserved characters via the shared `validate.RejectMetachars` helper.
+
+### `builder new schematic <name>` — what it creates
+
+Two modes, controlled by the `--inline` flag.
+
+**Path mode (default)** — produces 4 outputs:
+
+1. `schematics/<name>/factory.{ts,js}` — factory stub (TS or JS depending on language detection)
+2. `schematics/<name>/schema.json` — canonical v1 shape `{"inputs": {}}` (two-space indent, trailing newline, no BOM, no HTML escaping)
+3. `schematics/<name>/schema.d.ts` — auto-generated TypeScript interface from `schema.json` inputs (always emitted regardless of `--language`)
+4. `project-builder.json` — adds `collections.default.<name>: { "path": "./schematics/<name>" }`
+
+**Inline mode (`--inline`)** — embeds the schematic directly inside `project-builder.json`:
+
+```json
+"collections": {
+  "default": {
+    "schematics": {
+      "<name>": { "inputs": {} }
+    }
+  }
+}
+```
+
+No `schematics/<name>/` files are created. Soft warnings fire when a collection accumulates ≥10 inline schematics or when `project-builder.json` exceeds 20KB after the write.
+
+### `builder new collection <name>` — what it creates
+
+**Default mode** — produces 2 outputs:
+
+1. `schematics/<name>/collection.json` — skeleton `{"version": 1, "schematics": {}}`
+2. `project-builder.json` — adds `collections.<name>: { "path": "./schematics/<name>/collection.json" }`
+
+**Publishable mode (`--publishable`)** — produces 7 outputs (collection skeleton + lifecycle stubs):
+
+1. `schematics/<name>/collection.json`
+2. `schematics/<name>/add/factory.ts` + `schema.json` + `schema.d.ts`
+3. `schematics/<name>/remove/factory.ts` + `schema.json` + `schema.d.ts`
+4. `project-builder.json` entry includes `add` + `remove` paths
+
+`--publishable` cannot be combined with `--inline` — they are mutually exclusive (mode conflict).
+
+### Flags
+
+| Flag | Applies to | Effect |
+|---|---|---|
+| `--force` | both | Overwrite existing schematic / collection of the same name |
+| `--dry-run` | both | Preview planned operations as `PlannedOp[]`. Writes nothing. Output as JSON via `--output=json`. |
+| `--inline` | `schematic` | Embed schema in `project-builder.json` instead of creating files (mutually exclusive with `--publishable` for collection) |
+| `--language=<ts\|js>` | `schematic` | Force TypeScript or JavaScript factory. Auto-detect default: TS if `devDependencies.typescript` OR `tsconfig.json` exists; falls back to TS with a warning otherwise. |
+| `--extends=<@scope/pkg:base>` | `schematic` | Declare a base schematic this one extends. Grammar enforced: `^@[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+$`. Path traversal rejected. |
+| `--publishable` | `collection` | Generate add/remove lifecycle stubs (turns the collection into a publishable npm package skeleton) |
+| `--output=<pretty\|json>` | both | Output format (inherited persistent flag from root) |
+
+### Examples
+
+```sh
+# Standard schematic — 3 files + project-builder.json entry, TS auto-detected
+builder new schematic my-component
+
+# Schematic with explicit JavaScript factory
+builder new s my-helper --language=js
+
+# Inline schematic — no files, embedded in project-builder.json
+builder new schematic config-only --inline
+
+# Schematic that extends an external base (no network call at create-time)
+builder new schematic feature-flags --extends=@my-org/core:base
+
+# Preview as JSON without writing anything
+builder new schematic preview-test --dry-run --output=json
+
+# Force overwrite an existing schematic
+builder new schematic my-component --force
+
+# Plain collection — collection.json + project-builder.json entry only
+builder new collection ui-kit
+
+# Publishable collection — adds add/remove lifecycle stubs
+builder new collection my-pkg --publishable
+
+# Collection alias
+builder new c shared-utils --publishable
+```
+
+### `schema.json` v1 format
+
+The generated `schema.json` is a closed shape — only the fields below are accepted on read:
+
+```json
+{
+  "version": 1,
+  "inputs": {
+    "<name>": {
+      "type": "string|number|boolean|enum|list",
+      "description": "...",
+      "position": 0,
+      "default": <type-compatible value>,
+      "enum": ["a", "b"],
+      "items": { "type": "string" }
+    }
+  }
+}
+```
+
+**FORBIDDEN top-level keys** (rejected on read with explicit error):
+
+- `properties` — Angular JSON Schema draft-07 sentinel
+- `$schema` referencing `http://json-schema.org/draft-07/schema` — same legacy contract
+
+This is the breaking departure from Angular schematics. The `$schema` written by `builder init` points to the SDK-bundled meta-schema, not draft-07.
+
+`{"inputs": {}}` is the canonical empty form (two-space indent, trailing newline, no BOM). Fitness function `FF-15 schema-json-canonical.sh` enforces this for generated output.
+
+### TypeScript codegen (`.d.ts`)
+
+For each path-mode schematic, `schema.d.ts` is generated alongside `schema.json` using a hand-rolled `strings.Builder` (NOT `text/template` — silent-injection class avoided per ADR-032). Property names are escaped via the `tsident` package which:
+
+- Replaces hyphens, dots, spaces with `_` (collapsed: `my--name` → `my_name`)
+- Prefixes leading-digit names with `_` (`123x` → `_123x`)
+- Suffixes TypeScript reserved words with `_` (`class` → `class_`, `interface` → `interface_`)
+- Replaces non-ASCII bytes with `_`
+
+The 69 ECMAScript + TypeScript reserved words are enumerated in `internal/shared/tsident/reserved.go` and every entry is asserted by fitness function `FF-14 tsident-reserved-coverage.sh`.
+
+Header comment format (deterministic, no timestamp — clean `git diff`):
+
+```ts
+// Auto-generated by builder new — do not edit manually
+// @builder-cli v0.1.0
+
+export interface MySchematicSchematicInputs {
+  class_: string; // original: class
+  count?: number;
+}
+```
+
+### Errors you might hit
+
+Every error includes a structured `code`, message, and `suggestions` array. Exit code: `2` for `*errs.Error` (structured user-correctable), `1` for unexpected.
+
+| Code | When | Remediation |
+|---|---|---|
+| `new_schematic_exists` | Schematic with this name exists in the default collection (path or inline) | re-run with `--force`, or pick a different name |
+| `new_collection_exists` | Collection with this name already exists | re-run with `--force`, or pick a different name |
+| `new_invalid_name` | Name contains shell metacharacters, path separators, null bytes, or is empty | rename — kebab-case only, no separators, no metacharacters |
+| `new_invalid_extends` | `--extends` value fails grammar `@scope/pkg:collection` (path traversal, missing `@`/`:`, whitespace) | fix the format per the grammar |
+| `new_mode_conflict` | `--publishable --inline` together; or `--inline --force` when path-mode entry exists | pick one mode; for migration use `builder remove` first |
+| `new_invalid_language` | `--language=<value>` not in `{ts, js}` | use `--language=ts` or `--language=js` (or omit for auto-detect) |
+
+### Project-builder.json mutation invariants
+
+- **Atomic writes**: write-temp + rename. Partial state impossible (REQ-PJ-01). Concurrent runs rely on OS-level rename atomicity — at least one wins.
+- **Idempotent**: `--force` re-runs produce byte-identical output (REQ-PJ-02).
+- **Forward-compat**: unknown top-level fields preserved verbatim on read-mutate-write (REQ-PJ-04).
+- **`version` field preserved verbatim** — string `"1"` stays string; integer `1` stays integer (REQ-PJ-03).
+- **No HTML escaping** — uses `json.NewEncoder` + `SetEscapeHTML(false)` per L-builder-init-03 (REQ-PJ-07).
+- **UTF-8 BOM detected and stripped on read** with a Renderer warning (ADV-06).
+- **Symlink rejection** — schematic dir resolving outside workspace via `EvalSymlinks` is rejected before any write (ADV-08).
+
+### Adversarial coverage
+
+13 adversarial scenarios are tested end-to-end:
+
+- TS reserved word as schematic name (`class` → `class_` in `.d.ts`, original preserved in `schema.json`)
+- Path traversal in name and `--extends` (rejected via `validate.RejectMetachars` and grammar regex)
+- Shell metacharacter / null byte in name
+- UTF-8 BOM in existing `schema.json` (stripped + warned)
+- Concurrent runs (race detector clean; OS rename atomicity guarantees single winner)
+- Symlink pointing outside workspace
+- Read-only filesystem (no partial state; atomic write fails before rename)
+- `--inline --force` when path-mode entry exists (mode conflict error)
+- All 69 TypeScript reserved words tested by data-driven matrix
+- 255-char max-length name (no panic, no OOM)
+
+---
+
 ## Architectural highlights
 
 - **Hexagonal**: handler → service → port. The init feature is the first to *not* compose the `Engine` port — it's CLI-only.
@@ -243,10 +437,15 @@ Every error includes a structured `code`, a human-readable `message`, and a non-
   - SKILL.md placeholder bytes (`//go:embed` + SHA-256 fixture)
   - AGENTS/CLAUDE marker begin/end literals (`<!-- pbuilder:skill:begin -->` / `<!-- pbuilder:skill:end -->`)
   - `--json --dry-run` envelope schema (5 stable `op` values: `create_file`, `append_marker`, `modify_devdep`, `install_package`, `mcp_setup_offered`)
-- **Strict TDD**: every REQ has a passing test. 13 CI-enforced fitness functions (handler LOC ceiling, marker uniqueness, error-code additivity, embed byte-stability, no cross-feature imports, etc.).
+- **Strict TDD**: every REQ has a passing test. 18+ CI-enforced fitness functions (handler LOC ceiling, marker uniqueness, error-code additivity, embed byte-stability, no cross-feature imports, tsident reserved-word coverage, schema.json canonical bytes, projectconfig F-01 promotion marker, release workflow guards, etc.).
 - **Compliance with the [Project Builder Mental Model](https://github.com/Project-Builder-Schematics/project-builder-cli/discussions/2)**: four atomic responsibilities (config, AI skill, schematic authoring scaffold, dependency declaration) — each materialised as exactly one of the five outputs.
 
-For the full ADR list (now ADR-001..ADR-023), browse the [`design`](./design) directory or the [Architectural Decisions discussion](https://github.com/Project-Builder-Schematics/project-builder-cli/discussions).
+For the full ADR list (now ADR-001..ADR-034), browse the [`design`](./design) directory or the [Architectural Decisions discussion](https://github.com/Project-Builder-Schematics/project-builder-cli/discussions). The most recent additions:
+
+- **ADR-031** — `schema.json` v1 closed shape (rejects Angular draft-07 `properties` field on read)
+- **ADR-032** — TS codegen via `strings.Builder` + `tsident` package (silent-injection class avoided vs `text/template`)
+- **ADR-033** — inline-vs-path service method split with explicit mode-conflict rejection
+- **ADR-034** — `projectconfig` in-line + F-01 followup commitment to promote to `internal/shared/projectconfig/` before `builder add` lands
 
 ---
 
@@ -268,11 +467,13 @@ Hooks (`lefthook`) run formatters on commit and tests on push. See [`CONTRIBUTIN
 
 The full breakdown lives at [ROADMAP.md](./ROADMAP.md). Highlights of what's next:
 
-1. **`builder execute`** (Phase 5, L) — the central command. Full 6-step pipeline against the AngularSubprocessAdapter.
-2. **`builder add`** (M-L) — register external collections.
-3. **Templates system foundation** (L) — prerequisite for `builder create` + `builder migrate`.
-4. **Followups from `builder init`**: coverage glue (raise to ≥70%), TTY-suppression flag for scripted contexts, `--publishable` mode, actual MCP server install.
-5. **npm multi-platform distribution** (L) — JS wrapper + platform packages — gates v1.0 release.
+1. **`builder execute`** (Phase 6, L) — the central command. Full 6-step pipeline against the AngularSubprocessAdapter.
+2. **`f-01-projectconfig-promotion`** (M, **HIGH**) — promote `internal/feature/new/projectconfig.go` to `internal/shared/projectconfig/` before `builder add` lands. Tracked by FF-17.
+3. **`builder add`** (M-L) — register external collections (depends on F-01).
+4. **Templates system foundation** (L) — prerequisite for `builder create` + `builder migrate`.
+5. **Followups from `builder new`**: `s002-tdd-cleanup` (retroactive RED→GREEN split), `schema-forbidden-field-wire-up` (wire `ReadSchemaFromBytes` into `--force` overwrite path), `flaky-race-investigation`.
+6. **Followups from `builder init`**: coverage glue (raise to ≥70%), TTY-suppression flag for scripted contexts, `--publishable` mode, actual MCP server install.
+7. **npm multi-platform distribution** (L) — JS wrapper + platform packages — gates v1.0 release.
 
 ---
 
