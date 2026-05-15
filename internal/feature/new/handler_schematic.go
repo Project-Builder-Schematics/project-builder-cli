@@ -3,16 +3,21 @@
 //
 // Responsibilities (ADR-011: handler ≤ 80 SLOC soft / ≤ 100 hard):
 //  1. Parse flags and positional argument (name)
-//  2. Build NewSchematicRequest and call svc.RegisterSchematic
-//  3. Render the result via RenderPretty or RenderJSON (ADR-019)
+//  2. Resolve working directory (os.Getwd)
+//  3. Build NewSchematicRequest and call svc.RegisterSchematic
+//  4. Render the result via RenderPretty or RenderJSON (ADR-019)
 //
-// S-000b: stub — delegates to RegisterSchematic which returns
-// ErrCodeNewNotImplemented (REQ-EC-07). Real logic lands in S-001.
+// S-001: real implementation. Delegates to service.RegisterSchematic which
+// dispatches to registerSchematicPath. --dry-run swaps in dryRunFS.
+// .d.ts generation is STUBBED with a WARN until S-003.
 package newfeature
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 
+	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
@@ -35,6 +40,17 @@ func handleSchematic(svc *Service) func(cmd *cobra.Command, args []string, dryRu
 		language, _ := flags.GetString("language")
 		extends, _ := flags.GetString("extends")
 
+		// Resolve workspace root (cwd by default; positional dir not supported in `new`).
+		workDir, err := os.Getwd()
+		if err != nil {
+			return &errs.Error{
+				Code:    errs.ErrCodeInvalidInput,
+				Op:      "new.handler",
+				Message: "could not determine current working directory",
+				Cause:   err,
+			}
+		}
+
 		// Swap FSWriter to dryRunFS when --dry-run is set.
 		activeSvc := svc
 		if dryRun {
@@ -43,6 +59,7 @@ func handleSchematic(svc *Service) func(cmd *cobra.Command, args []string, dryRu
 
 		req := NewSchematicRequest{
 			Name:       name,
+			WorkDir:    workDir,
 			Force:      force,
 			DryRun:     dryRun,
 			Inline:     inline,
@@ -54,6 +71,12 @@ func handleSchematic(svc *Service) func(cmd *cobra.Command, args []string, dryRu
 		result, err := activeSvc.RegisterSchematic(cmd.Context(), req)
 		if err != nil {
 			return err
+		}
+
+		// S-001: .d.ts generation is STUBBED — emit WARN via Renderer (REQ-TG via S-003).
+		if !dryRun && !inline {
+			result.Warnings = append(result.Warnings,
+				"schema.d.ts generation pending next slice (S-003)")
 		}
 
 		if jsonOut {
