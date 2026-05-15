@@ -141,50 +141,8 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 		case "version":
 			cfg.Version = raw
 		case "collections":
-			var colsRaw map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &colsRaw); err != nil {
-				return nil, &errs.Error{
-					Code:    errs.ErrCodeInvalidInput,
-					Op:      "projectconfig.read",
-					Message: "project-builder.json: 'collections' field is not a JSON object.",
-					Cause:   err,
-				}
-			}
-			for colName, colRaw := range colsRaw {
-				var colEntries map[string]json.RawMessage
-				if err := json.Unmarshal(colRaw, &colEntries); err != nil {
-					// Tolerate malformed collection entry — store as empty map.
-					colEntries = make(map[string]json.RawMessage)
-				}
-
-				// Detect collection-level path entry (REQ-NC-01).
-				// A collection entry has {"path": "<string>"} where the path value is
-				// a JSON string (no other keys, or "path" is the only meaningful key).
-				// This distinguishes it from a schematic container ("default") which
-				// has schematic name keys or a "schematics" sub-key.
-				if pathRaw, haspath := colEntries["path"]; haspath && isJSONString(pathRaw) {
-					var colPath string
-					if err := json.Unmarshal(pathRaw, &colPath); err == nil {
-						cfg.CollectionPaths[colName] = colPath
-						// Do NOT also add to Collections — it is a collection, not a schematic container.
-						continue
-					}
-				}
-
-				// Separate inline entries (under "schematics" key) from path entries.
-				pathEntries := make(map[string]json.RawMessage)
-				for entryKey, entryRaw := range colEntries {
-					if entryKey == "schematics" {
-						// Inline schematics are nested under "schematics" sub-key.
-						var inlineMap map[string]json.RawMessage
-						if err := json.Unmarshal(entryRaw, &inlineMap); err == nil {
-							cfg.Inlines[colName] = inlineMap
-						}
-					} else {
-						pathEntries[entryKey] = entryRaw
-					}
-				}
-				cfg.Collections[colName] = pathEntries
+			if err := parseCollections(raw, cfg); err != nil {
+				return nil, err
 			}
 		default:
 			cfg.Extra[key] = raw
@@ -192,6 +150,65 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseCollections decodes the "collections" JSON field into cfg.Collections,
+// cfg.Inlines, and cfg.CollectionPaths. Extracted from ReadConfig to reduce its
+// cyclomatic complexity (gocyclo threshold).
+func parseCollections(raw json.RawMessage, cfg *Config) error {
+	var colsRaw map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &colsRaw); err != nil {
+		return &errs.Error{
+			Code:    errs.ErrCodeInvalidInput,
+			Op:      "projectconfig.read",
+			Message: "project-builder.json: 'collections' field is not a JSON object.",
+			Cause:   err,
+		}
+	}
+	for colName, colRaw := range colsRaw {
+		parseCollectionEntry(colName, colRaw, cfg)
+	}
+	return nil
+}
+
+// parseCollectionEntry decodes a single collection entry from the collections map.
+// It distinguishes top-level collection path entries (REQ-NC-01) from schematic
+// containers ("default") which hold path-mode and inline-mode schematics.
+func parseCollectionEntry(colName string, colRaw json.RawMessage, cfg *Config) {
+	var colEntries map[string]json.RawMessage
+	if err := json.Unmarshal(colRaw, &colEntries); err != nil {
+		// Tolerate malformed collection entry — store as empty map.
+		colEntries = make(map[string]json.RawMessage)
+	}
+
+	// Detect collection-level path entry (REQ-NC-01).
+	// A collection entry has {"path": "<string>"} where the path value is
+	// a JSON string (no other keys, or "path" is the only meaningful key).
+	// This distinguishes it from a schematic container ("default") which
+	// has schematic name keys or a "schematics" sub-key.
+	if pathRaw, haspath := colEntries["path"]; haspath && isJSONString(pathRaw) {
+		var colPath string
+		if err := json.Unmarshal(pathRaw, &colPath); err == nil {
+			cfg.CollectionPaths[colName] = colPath
+			// Do NOT also add to Collections — it is a collection, not a schematic container.
+			return
+		}
+	}
+
+	// Separate inline entries (under "schematics" key) from path entries.
+	pathEntries := make(map[string]json.RawMessage)
+	for entryKey, entryRaw := range colEntries {
+		if entryKey == "schematics" {
+			// Inline schematics are nested under "schematics" sub-key.
+			var inlineMap map[string]json.RawMessage
+			if err := json.Unmarshal(entryRaw, &inlineMap); err == nil {
+				cfg.Inlines[colName] = inlineMap
+			}
+		} else {
+			pathEntries[entryKey] = entryRaw
+		}
+	}
+	cfg.Collections[colName] = pathEntries
 }
 
 // isJSONString returns true iff the raw JSON token is a quoted string.

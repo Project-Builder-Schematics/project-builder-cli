@@ -97,6 +97,36 @@ var promptExtendsFn = func(_ []string) (string, bool, error) {
 	return "", true, nil
 }
 
+// resolveExtends resolves the effective --extends value.
+// If extendsFlagValue is non-empty it is validated and returned as-is.
+// If empty AND the terminal is interactive, the promptExtendsFn seam is called
+// (REQ-EX-04). If the prompt is skipped (or non-interactive), returns "".
+// Extracted from registerSchematicPath to keep cyclomatic complexity ≤15.
+func resolveExtends(extendsFlagValue string) (string, error) {
+	if extendsFlagValue != "" {
+		// Validate grammar before returning (REQ-EX-02/03).
+		if err := ValidateExtendsGrammar(extendsFlagValue); err != nil {
+			return "", err
+		}
+		return extendsFlagValue, nil
+	}
+	// No flag — try interactive prompt.
+	if !IsInteractiveTTY() {
+		return "", nil
+	}
+	extendsMu.RLock()
+	fn := promptExtendsFn
+	extendsMu.RUnlock()
+	selected, skipped, err := fn(nil)
+	if err != nil {
+		return "", err
+	}
+	if skipped || selected == "" {
+		return "", nil
+	}
+	return selected, nil
+}
+
 // IsInteractiveTTY reports whether os.Stdin is an interactive terminal (TTY).
 // Used to gate the TUI prompt for --extends (REQ-EX-04/05):
 //   - Interactive (true): show TUI prompt listing externals from project-builder.json
