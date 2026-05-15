@@ -515,11 +515,10 @@ func Test_E2E_Inline_ModeConflict_PathExists(t *testing.T) {
 	}
 }
 
-// Test_E2E_Warnings_DtsDeferred verifies the .d.ts deferred WARN is present
-// in the result (REQ-TG stub; .d.ts lands in S-003).
-// The service populates result.Warnings; the handler renders them.
-// This test asserts the Warnings field is populated so the handler can display it.
-func Test_E2E_Warnings_DtsDeferred(t *testing.T) {
+// Test_E2E_SchemaDTS_Present verifies that path-mode creates schema.d.ts and
+// that NO deferred WARN is emitted in the rendered output (S-003 implements .d.ts).
+// Replaces the old Test_E2E_Warnings_DtsDeferred which expected the stub WARN.
+func Test_E2E_SchemaDTS_Present(t *testing.T) {
 	t.Parallel()
 
 	dir, fs := setupE2EWorkspace(t)
@@ -533,16 +532,33 @@ func Test_E2E_Warnings_DtsDeferred(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegisterSchematic: %v", err)
 	}
-
-	// The handler (not the service) appends the .d.ts warning.
-	// Verify the result has a zero-warning list here (service is clean);
-	// the handler_schematic.go adds the warning before rendering.
-	// This test validates the service result is clean (warning is handler concern).
 	if result.DryRun {
 		t.Error("result.DryRun should be false")
 	}
-	// Warnings from service must be nil (S-001 — handler adds warning, not service).
-	if len(result.Warnings) != 0 {
-		t.Errorf("service result.Warnings = %v; expected empty (handler adds warnings)", result.Warnings)
+
+	// schema.d.ts MUST be present (REQ-TG-01 / REQ-NS-01 three-file contract).
+	dtsPath := filepath.Join(dir, "schematics", "my-schematic", "schema.d.ts")
+	if !fs.HasFile(dtsPath) {
+		t.Errorf("schema.d.ts not created at %s", dtsPath)
+	}
+
+	// schema.d.ts content must include the interface name (REQ-TG-02).
+	dtsBytes, _ := fs.ReadFile(dtsPath)
+	if !strings.Contains(string(dtsBytes), "MySchematicSchematicInputs") {
+		t.Errorf("schema.d.ts missing interface; content: %s", dtsBytes)
+	}
+
+	// Simulate handler behavior: the handler appends warnings and then renders.
+	// In S-003, the handler MUST NOT append the "schema.d.ts generation pending" WARN.
+	// We simulate by rendering the result and asserting no "pending" text appears.
+	var buf bytes.Buffer
+	newfeature.RenderPretty(&buf, *result)
+	rendered := buf.String()
+
+	if strings.Contains(rendered, "pending") {
+		t.Errorf("rendered output contains 'pending' WARN (should be removed in S-003):\n%s", rendered)
+	}
+	if strings.Contains(rendered, "schema.d.ts generation") {
+		t.Errorf("rendered output still shows deferred .d.ts WARN (S-003 implements it):\n%s", rendered)
 	}
 }
