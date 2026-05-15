@@ -161,7 +161,7 @@ type collectionSkeleton struct {
 //
 // Pure function; deterministic; no side effects; no I/O.
 func MarshalCollectionSkeleton() []byte {
-	v := collectionSkeleton{Version: 0, Schematics: map[string]any{}} // wrong version → RED
+	v := collectionSkeleton{Version: 1, Schematics: map[string]any{}}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
