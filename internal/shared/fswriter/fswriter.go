@@ -1,11 +1,11 @@
-// Package initialise — fswriter.go provides the two production FSWriter
+// Package fswriter provides the FSWriter port and its two production
 // implementations: osFS (real writes via atomic rename) and dryRunFS
 // (records PlannedOps without touching disk).
 //
-// ADR-020: all filesystem I/O in the init feature goes through FSWriter.
+// ADR-020: all filesystem I/O in feature packages goes through FSWriter.
 // FF-init-02 (post-feature): a fitness function script enforces that no
-// init production code calls os.* directly outside this file.
-package initialise
+// production code calls os.* directly outside this file.
+package fswriter
 
 import (
 	"fmt"
@@ -13,6 +13,66 @@ import (
 	"path/filepath"
 	"sync"
 )
+
+// FSWriter is the filesystem port used by all feature packages (ADR-020).
+// All filesystem I/O in the service layer MUST go through this interface.
+// Three implementations exist: osFS (real writes), dryRunFS (records PlannedOps),
+// fakeFS (in-memory, for tests).
+type FSWriter interface {
+	// Stat returns file metadata for path, or an error if the path does not
+	// exist or is not accessible.
+	Stat(path string) (os.FileInfo, error)
+
+	// Lstat returns file metadata for path without following symlinks.
+	// Use this to detect whether a path is itself a symlink (REQ-AR-05).
+	Lstat(path string) (os.FileInfo, error)
+
+	// EvalSymlinks returns the path with all symlinks resolved.
+	// Returns an error if any component of the path does not exist.
+	// Use this to verify the resolved target stays within the project
+	// directory (REQ-AR-05 symlink-safety check).
+	EvalSymlinks(path string) (string, error)
+
+	// ReadFile returns the contents of path, or an error.
+	ReadFile(path string) ([]byte, error)
+
+	// WriteFile writes data to path with the given permissions.
+	// Implementations MUST use an atomic write (temp file + rename) to avoid
+	// partial writes (FF-init-02).
+	WriteFile(path string, data []byte, perm os.FileMode) error
+
+	// MkdirAll creates path and all parents with the given permissions.
+	MkdirAll(path string, perm os.FileMode) error
+
+	// AppendFile appends data to path, creating the file if it does not exist.
+	AppendFile(path string, data []byte) error
+
+	// PlannedOps returns the list of operations recorded in dry-run mode.
+	// Returns nil for non-dry-run implementations.
+	PlannedOps() []PlannedOp
+}
+
+// OpRecorder is satisfied by FSWriter implementations that support
+// recording arbitrary PlannedOps (e.g. dryRunFS, fakeFS). Services use
+// a type assertion to this interface for custom op types that don't map
+// to a standard FSWriter method (e.g. mcp_setup_offered, install_package).
+type OpRecorder interface {
+	RecordOp(PlannedOp)
+}
+
+// PlannedOp records a single intended file operation in dry-run mode.
+// The Op field uses a stable 5-value enum (REQ-DR-02).
+type PlannedOp struct {
+	// Op is the stable operation discriminator.
+	// Values: create_file | append_marker | modify_devdep | install_package | mcp_setup_offered
+	Op string `json:"op"`
+
+	// Path is the target file or directory path. Omitted for mcp_setup_offered.
+	Path string `json:"path,omitempty"`
+
+	// Details carries supplementary information (e.g. package name for install_package).
+	Details string `json:"details,omitempty"`
+}
 
 // --- osFS: real filesystem implementation ---
 
@@ -46,12 +106,12 @@ func (o *osFS) EvalSymlinks(path string) (string, error) {
 
 // ReadFile delegates to os.ReadFile.
 //
-// G304 is suppressed: the path is supplied by the init handler after
-// canonicaliseDir (REQ-DV-01: filepath.Abs + filepath.Clean + .. traversal
+// G304 is suppressed: the path is supplied by the handler after
+// Canonicalise (REQ-DV-01: filepath.Abs + filepath.Clean + .. traversal
 // rejection). This osFS is only used in production via composeApp wiring;
 // tests use fakeFS.
 func (o *osFS) ReadFile(path string) ([]byte, error) {
-	return os.ReadFile(path) // #nosec G304 — path validated by canonicaliseDir
+	return os.ReadFile(path) // #nosec G304 — path validated by Canonicalise
 }
 
 // WriteFile writes data atomically: create a temp file in the same parent
@@ -112,8 +172,8 @@ func (o *osFS) MkdirAll(path string, perm os.FileMode) error {
 // project's existing convention for these files which are intended to be
 // committed and shared.
 //
-// G304 is suppressed: path is supplied by the init handler after
-// canonicaliseDir (REQ-DV-01); same justification as ReadFile above.
+// G304 is suppressed: path is supplied by the handler after
+// Canonicalise (REQ-DV-01); same justification as ReadFile above.
 func (o *osFS) AppendFile(path string, data []byte) (retErr error) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) // #nosec G302,G304 — see godoc
 	if err != nil {
@@ -145,6 +205,9 @@ type dryRunFS struct {
 
 // newDryRunFS returns a fresh dryRunFS.
 func newDryRunFS() *dryRunFS { return &dryRunFS{} }
+
+// NewDryRunWriter is the exported constructor for dry-run mode.
+func NewDryRunWriter() FSWriter { return newDryRunFS() }
 
 // Stat always returns os.ErrNotExist. In dry-run mode the service assumes
 // the target directory is clean (pre-run checks are skipped for dry-run).
@@ -192,10 +255,10 @@ func (d *dryRunFS) AppendFile(path string, _ []byte) error {
 	return nil
 }
 
-// recordOp appends an arbitrary PlannedOp (used by service for ops that
+// RecordOp appends an arbitrary PlannedOp (used by service for ops that
 // don't go through the standard filesystem methods, e.g. mcp_setup_offered
 // and install_package).
-func (d *dryRunFS) recordOp(op PlannedOp) {
+func (d *dryRunFS) RecordOp(op PlannedOp) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.ops = append(d.ops, op)

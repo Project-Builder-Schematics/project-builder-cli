@@ -159,9 +159,11 @@ func (f *fakeFS) PlannedOps() []PlannedOp {
 	return out
 }
 
-// recordOp appends an arbitrary PlannedOp (used by service stubs in dry-run mode
+// RecordOp appends an arbitrary PlannedOp (used by service stubs in dry-run mode
 // to record ops that don't go through Stat/WriteFile/AppendFile).
-func (f *fakeFS) recordOp(op PlannedOp) {
+// Implements fswriter.OpRecorder (exported method — required for cross-package
+// type assertion in service.go).
+func (f *fakeFS) RecordOp(op PlannedOp) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ops = append(f.ops, op)

@@ -136,10 +136,12 @@ func countComposeAppSLOC(src []byte) int {
 	return sloc
 }
 
-// Test_RootCmd_ListsExactly8Leaves covers cobra-command-tree.REQ-01.1.
+// Test_RootCmd_ListsExactly10Leaves covers cobra-command-tree REQ.
 // A "leaf" command is one with HasSubCommands() == false.
-// Expected leaves: init, execute, add, info, sync, validate, remove, skill update.
-func Test_RootCmd_ListsExactly8Leaves(t *testing.T) {
+// Expected leaves: init, execute, add, info, sync, validate, remove, skill update,
+// new schematic, new collection.
+// S-000b: count updated from 8 → 10 after adding the new parent + 2 leaves.
+func Test_RootCmd_ListsExactly10Leaves(t *testing.T) {
 	t.Parallel()
 
 	app, err := composeApp(Config{})
@@ -148,9 +150,14 @@ func Test_RootCmd_ListsExactly8Leaves(t *testing.T) {
 	}
 
 	leaves := collectLeaves(app.Root)
-	wantLeaves := []string{"init", "execute", "add", "info", "sync", "validate", "remove", "update"}
-	if len(leaves) != 8 {
-		t.Errorf("got %d leaf commands, want 8; leaves: %v", len(leaves), leaves)
+	wantLeaves := []string{
+		"init", "execute", "add", "info", "sync", "validate", "remove",
+		"update",     // skill update
+		"schematic",  // new schematic
+		"collection", // new collection
+	}
+	if len(leaves) != 10 {
+		t.Errorf("got %d leaf commands, want 10; leaves: %v", len(leaves), leaves)
 	}
 
 	// Verify each expected leaf is present.
@@ -162,6 +169,52 @@ func Test_RootCmd_ListsExactly8Leaves(t *testing.T) {
 		if !leaveSet[want] {
 			t.Errorf("missing expected leaf command %q", want)
 		}
+	}
+}
+
+// hasAlias reports whether a Cobra command has the given alias string.
+func hasAlias(cmd *cobra.Command, alias string) bool {
+	for _, a := range cmd.Aliases {
+		if a == alias {
+			return true
+		}
+	}
+	return false
+}
+
+// Test_RootCmd_NewSchematic_HasAliasS verifies alias "s" for `builder new schematic`.
+// REQ-AL-01.
+func Test_RootCmd_NewSchematic_HasAliasS(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp: %v", err)
+	}
+	scCmd, _, scErr := app.Root.Find([]string{"new", "schematic"})
+	if scErr != nil || scCmd == nil || scCmd.Name() != "schematic" {
+		t.Fatalf("new schematic subcommand not found: %v", scErr)
+	}
+	if !hasAlias(scCmd, "s") {
+		t.Errorf("new schematic: missing alias 's' (REQ-AL-01)")
+	}
+}
+
+// Test_RootCmd_NewCollection_HasAliasC verifies alias "c" for `builder new collection`.
+// REQ-AL-02.
+func Test_RootCmd_NewCollection_HasAliasC(t *testing.T) {
+	t.Parallel()
+
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp: %v", err)
+	}
+	colCmd, _, colErr := app.Root.Find([]string{"new", "collection"})
+	if colErr != nil || colCmd == nil || colCmd.Name() != "collection" {
+		t.Fatalf("new collection subcommand not found: %v", colErr)
+	}
+	if !hasAlias(colCmd, "c") {
+		t.Errorf("new collection: missing alias 'c' (REQ-AL-02)")
 	}
 }
 

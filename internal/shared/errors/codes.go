@@ -58,4 +58,36 @@ const (
 	// planned but not yet available (e.g. --publishable mode).
 	// Distinct from ErrCodeNotImplemented which is the generic stub sentinel.
 	ErrCodeInitNotImplemented ErrCode = "init_not_implemented"
+
+	// --- new feature error codes (REQ-EC-01..07) ---
+
+	// ErrCodeNewSchematicExists is returned when the named schematic already exists
+	// in the target collection and --force was not supplied (REQ-EC-01).
+	ErrCodeNewSchematicExists ErrCode = "new_schematic_exists"
+
+	// ErrCodeNewCollectionExists is returned when the named collection already exists
+	// and --force was not supplied (REQ-EC-02).
+	ErrCodeNewCollectionExists ErrCode = "new_collection_exists"
+
+	// ErrCodeInvalidSchematicName is returned when the provided name contains path
+	// separators, shell metacharacters, null bytes, or is empty (REQ-EC-03).
+	ErrCodeInvalidSchematicName ErrCode = "new_invalid_name"
+
+	// ErrCodeInvalidExtends is returned when the --extends value does not match
+	// the required @scope/pkg:collection grammar (REQ-EC-04).
+	ErrCodeInvalidExtends ErrCode = "new_invalid_extends"
+
+	// ErrCodeModeConflict is returned when incompatible flags are combined, e.g.
+	// --inline --force when a path-mode entry exists, or --publishable --inline
+	// (REQ-EC-05).
+	ErrCodeModeConflict ErrCode = "new_mode_conflict"
+
+	// ErrCodeInvalidLanguage is returned when --language receives a value not in
+	// the supported set {ts, js} (REQ-EC-06).
+	ErrCodeInvalidLanguage ErrCode = "new_invalid_language"
+
+	// ErrCodeNewNotImplemented is a stub sentinel returned by handler stubs before
+	// the feature is fully implemented. Will be REMOVED at archive time (REQ-EC-07).
+	// Distinct from ErrCodeNotImplemented (generic) and ErrCodeInitNotImplemented.
+	ErrCodeNewNotImplemented ErrCode = "new_not_implemented"
 )

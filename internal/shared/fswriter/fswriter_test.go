@@ -1,11 +1,11 @@
-// Package initialise — fswriter_test.go covers FSWriter implementations.
+// Package fswriter — fswriter_test.go covers FSWriter implementations.
 //
 // REQ coverage: REQ-FW-01 (FSWriter port; dryRunFS records, never writes),
 // REQ-FW-02 (atomic write — osFS), REQ-FW-03 (composeApp wires osFS).
 //
 // Tests are white-box (same package) so the unexported osFS and dryRunFS
 // types are directly exercisable.
-package initialise
+package fswriter
 
 import (
 	"os"

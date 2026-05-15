@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 
@@ -20,12 +21,15 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/info"
 	initialise "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init"
 	inittemplate "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/init/template"
+	newfeature "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/new"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/remove"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/skill"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/sync"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/validate"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine/angular"
+	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render"
 )
 
@@ -101,11 +105,17 @@ Run 'builder <command> --help' for command-specific usage.`,
 	// initFS is osFS (real writes); in dry-run mode the handler swaps to dryRunFS.
 	// initPM is the PackageManagerRunner stub (real impl lands in S-005).
 	// inittemplate.Skill holds the locked v0 SKILL.md bytes bundled via //go:embed (ADR-022, S-002).
-	initFS := initialise.NewOSWriter()
+	// NOTE: switched from initialise.NewOSWriter() to fswriter.NewOSWriter() (S-000b, shared promotion).
+	initFS := fswriter.NewOSWriter()
 	initPM := initialise.NewRealPM()
 	initSvc := initialise.NewService(initFS, initPM, inittemplate.Skill)
 
-	// Register all 8 leaf commands (cobra-command-tree.REQ-01.1).
+	// New feature wiring (S-000b).
+	// newFS is osFS; in dry-run mode the handler swaps to dryRunFS per request.
+	newFS := fswriter.NewOSWriter()
+	newSvc := newfeature.NewService(newFS)
+
+	// Register all commands (cobra-command-tree.REQ-01.1).
 	root.AddCommand(initialise.NewCommand(initSvc)) // init
 	root.AddCommand(execute.NewCommand())           // execute
 	root.AddCommand(add.NewCommand())               // add
@@ -114,12 +124,40 @@ Run 'builder <command> --help' for command-specific usage.`,
 	root.AddCommand(validate.NewCommand())          // validate
 	root.AddCommand(remove.NewCommand())            // remove
 	root.AddCommand(skill.NewCommand())             // skill (parent; skill update is its leaf)
+	root.AddCommand(newfeature.NewCommand(newSvc))  // new (parent; schematic + collection leaves)
 
 	return &App{
 		Engine:   eng,
 		Renderer: ren,
 		Root:     root,
 	}, nil
+}
+
+// exitCodeForErr maps an error from fang.Execute to a process exit code.
+//
+// Exit code semantics:
+//   - 0: no error (nil — defensive; main never calls this for nil)
+//   - 2: structured user-facing error (*errs.Error, direct or wrapped via %w)
+//   - 1: unexpected / infrastructure error (anything else)
+//
+// Using exit code 2 for *errs.Error ensures that CI pipelines and AI agents
+// can distinguish user-correctable errors (bad name, existing schematic, mode
+// conflict, invalid extends, invalid language) from unexpected crashes.
+//
+// Trace: handler returns *errs.Error → service propagates → fang.Execute returns
+// it → main calls exitCodeForErr → errors.As finds *errs.Error → returns 2 →
+// os.Exit(2). REQ-NS-02, REQ-NS-04, REQ-NS-07, REQ-NSI-02, REQ-NCP-03,
+// REQ-EX-02, REQ-EX-03, REQ-LG-06, REQ-NC-02, REQ-NC-05, REQ-EC-01..06 all
+// require exit code 2 for structured errors (moves from PARTIAL to COMPLIANT).
+func exitCodeForErr(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *errs.Error
+	if errors.As(err, &ee) {
+		return 2
+	}
+	return 1
 }
 
 func main() {
@@ -142,9 +180,10 @@ func main() {
 	// fang.Execute wraps Cobra's Execute with styled help, error, and
 	// version output (charmbracelet aesthetics). Tests still drive
 	// app.Root.Execute() directly to keep assertions deterministic.
+	//
 	// WithVersion injects the compile-time Version const so fang does not
 	// fall back to "unknown (built from source)" (REQ-CVA-004).
 	if err := fang.Execute(context.Background(), app.Root, fang.WithVersion(Version)); err != nil {
-		os.Exit(1)
+		os.Exit(exitCodeForErr(err))
 	}
 }

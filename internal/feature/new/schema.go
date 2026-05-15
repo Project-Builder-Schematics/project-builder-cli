@@ -1,0 +1,289 @@
+// Package newfeature — schema.go generates schema.json v1 content and provides
+// the Schema type hierarchy used by tsgen.go for .d.ts codegen.
+//
+// REQ coverage:
+//   - REQ-SJ-01: top-level structure with required "inputs" object
+//   - REQ-SJ-02: InputSpec fields and type enum
+//   - REQ-SJ-03: empty schema {"inputs": {}} is a valid minimum
+//   - REQ-SJ-04: reject Angular JSON Schema format on read (properties/$schema:draft-07)
+//   - REQ-SJ-05: canonical byte sequence (two-space indent, trailing newline)
+//   - REQ-SJ-06: enum without values → ErrSchemaValidation
+//   - REQ-SJ-07: list without items.type → ErrSchemaValidation
+//   - REQ-SJ-08: negative position → ErrSchemaValidation
+//   - REQ-SJ-09: unknown fields → warning (not error)
+//   - REQ-SJ-10: default type mismatch → ErrSchemaValidation
+//   - REQ-PJ-07: json.NewEncoder + SetEscapeHTML(false) for all JSON writes
+//     (L-builder-init-03)
+package newfeature
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
+// ErrSchemaValidation is returned by ValidateSchema for structural violations.
+// Use errors.Is to check for this sentinel.
+var ErrSchemaValidation = errors.New("schema validation error")
+
+// Schema represents the parsed schema.json v1 structure (REQ-SJ-01/02).
+// All inputs are optional in v1 — tsgen marks every property as "T?".
+type Schema struct {
+	// Inputs maps input names to their specifications.
+	// Keys are the raw names as written in schema.json (pre-EscapeIdent).
+	Inputs map[string]InputSpec `json:"inputs"`
+}
+
+// InputSpec is a single input definition within schema.json (REQ-SJ-02).
+type InputSpec struct {
+	// Type is REQUIRED: one of "string", "number", "boolean", "enum", "list".
+	Type string `json:"type"`
+
+	// Description is an optional human-readable description.
+	Description string `json:"description,omitempty"`
+
+	// Position is an optional non-negative integer for CLI positional ordering.
+	Position *int `json:"position,omitempty"`
+
+	// Default is optional; must be type-compatible with Type.
+	Default any `json:"default,omitempty"`
+
+	// Enum lists string literals (REQUIRED when Type == "enum"; ≥1 item).
+	Enum []string `json:"enum,omitempty"`
+
+	// Items specifies the element type (REQUIRED when Type == "list").
+	Items *ItemsSpec `json:"items,omitempty"`
+
+	// UnknownFields captures any JSON fields not listed above (REQ-SJ-09).
+	// Populated by custom UnmarshalJSON when decoding schema.json from disk.
+	// In-memory construction (e.g. tests, code-gen) may set this directly.
+	// The json:"-" tag ensures unknown fields are NOT re-serialised on output.
+	UnknownFields map[string]any `json:"-"`
+}
+
+// ItemsSpec describes the element type for list inputs (REQ-SJ-02).
+type ItemsSpec struct {
+	// Type is the element type (same enum as InputSpec.Type, minus "list").
+	Type string `json:"type"`
+}
+
+// SchemaValidationWarning carries a non-fatal schema validation issue (REQ-SJ-09).
+type SchemaValidationWarning struct {
+	Field   string
+	Message string
+}
+
+// ValidateSchema checks the structural invariants of a Schema (REQ-SJ-06..10).
+// Returns (warnings, error). Error wraps ErrSchemaValidation on hard violations.
+// Warnings are non-fatal; processing continues.
+func ValidateSchema(s Schema) ([]SchemaValidationWarning, error) {
+	var warns []SchemaValidationWarning
+
+	for name, spec := range s.Inputs {
+		// REQ-SJ-06: enum type must have enum values.
+		if spec.Type == "enum" && len(spec.Enum) == 0 {
+			return warns, fmt.Errorf("%w: input %q has type 'enum' but no 'enum' values array", ErrSchemaValidation, name)
+		}
+
+		// REQ-SJ-07: list type must have items.type.
+		if spec.Type == "list" && (spec.Items == nil || spec.Items.Type == "") {
+			return warns, fmt.Errorf("%w: input %q has type 'list' but no 'items.type' defined", ErrSchemaValidation, name)
+		}
+
+		// REQ-SJ-08: position must be non-negative.
+		if spec.Position != nil && *spec.Position < 0 {
+			return warns, fmt.Errorf("%w: input %q: 'position' must be a non-negative integer", ErrSchemaValidation, name)
+		}
+
+		// REQ-SJ-10: default type mismatch.
+		if spec.Default != nil {
+			if err := checkDefaultType(name, spec); err != nil {
+				return warns, err
+			}
+		}
+
+		// REQ-SJ-09: unknown fields → warning (not error). Processing continues.
+		for field := range spec.UnknownFields {
+			warns = append(warns, SchemaValidationWarning{
+				Field:   field,
+				Message: fmt.Sprintf("input %q: unknown field %q — unrecognised fields are ignored but may indicate a typo", name, field),
+			})
+		}
+	}
+
+	return warns, nil
+}
+
+// checkDefaultType validates that the Default value is type-compatible (REQ-SJ-10).
+func checkDefaultType(name string, spec InputSpec) error {
+	switch spec.Type {
+	case "number":
+		switch spec.Default.(type) {
+		case float64, int, int64, float32:
+			return nil
+		}
+		return fmt.Errorf("%w: input %q: 'default' value type does not match declared type 'number'", ErrSchemaValidation, name)
+	case "boolean":
+		if _, ok := spec.Default.(bool); !ok {
+			return fmt.Errorf("%w: input %q: 'default' value type does not match declared type 'boolean'", ErrSchemaValidation, name)
+		}
+	case "string":
+		if _, ok := spec.Default.(string); !ok {
+			return fmt.Errorf("%w: input %q: 'default' value type does not match declared type 'string'", ErrSchemaValidation, name)
+		}
+	}
+	return nil
+}
+
+// angularDraft07URL is the JSON Schema draft-07 URL used by Angular CLI schematics.
+// Its presence at the top level of schema.json indicates Angular format, not builder format.
+const angularDraft07URL = "http://json-schema.org/draft-07/schema"
+
+// angularSchemaMsg is the user-facing message for REQ-SJ-04 Angular detection.
+// Stored as a constant so the lint suppression is in one place.
+//
+//nolint:revive,staticcheck // spec-mandated format: sentence-style with trailing period is intentional
+const angularSchemaMsg = "schema.json: detected Angular JSON Schema format (has 'properties' field). This is not a builder schema.json. See docs for migration."
+
+// angularSchemaErr returns the REQ-SJ-04 sentinel error for Angular schema detection.
+func angularSchemaErr() error {
+	return fmt.Errorf("%w: %s", ErrSchemaValidation, angularSchemaMsg)
+}
+
+// ReadSchemaFromBytes parses raw JSON bytes into a Schema, enforcing forbidden-field
+// detection (REQ-SJ-04) and BOM stripping (ADV-06).
+//
+// Returns (schema, warnings, error). Error wraps ErrSchemaValidation on:
+//   - Top-level "properties" field detected (Angular JSON Schema format)
+//   - Top-level "$schema" value matching the JSON Schema draft-07 URL
+//
+// Non-draft-07 "$schema" URLs are not forbidden — only the Angular draft-07 URL is rejected.
+// Unknown top-level fields (other than the forbidden ones) produce warnings via ValidateSchema.
+//
+// REQ-SJ-04: reject Angular JSON Schema format on read.
+// ADV-06: strip UTF-8 BOM before parsing.
+func ReadSchemaFromBytes(data []byte) (Schema, []SchemaValidationWarning, error) {
+	// ADV-06: strip UTF-8 BOM if present.
+	data, _ = StripBOM(data)
+
+	// First pass: decode into raw map to inspect top-level keys without
+	// committing to the Schema struct layout. This lets us reject Angular
+	// format before any Schema fields are populated.
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return Schema{}, nil, fmt.Errorf("%w: failed to parse schema.json: %w", ErrSchemaValidation, err)
+	}
+
+	// REQ-SJ-04: reject top-level "properties" (Angular JSON Schema shape).
+	if _, hasProperties := rawMap["properties"]; hasProperties {
+		return Schema{}, nil, angularSchemaErr()
+	}
+
+	// REQ-SJ-04: reject "$schema" matching the Angular draft-07 URL.
+	if schemaURLRaw, hasSchemaURL := rawMap["$schema"]; hasSchemaURL {
+		var schemaURL string
+		if err := json.Unmarshal(schemaURLRaw, &schemaURL); err == nil {
+			if schemaURL == angularDraft07URL {
+				return Schema{}, nil, angularSchemaErr()
+			}
+		}
+	}
+
+	// Second pass: unmarshal into the typed Schema struct.
+	var s Schema
+	if err := json.Unmarshal(data, &s); err != nil {
+		return Schema{}, nil, fmt.Errorf("%w: failed to decode schema.json: %w", ErrSchemaValidation, err)
+	}
+
+	// Run structural validation (REQ-SJ-06..10).
+	warns, err := ValidateSchema(s)
+	if err != nil {
+		return Schema{}, warns, err
+	}
+
+	return s, warns, nil
+}
+
+// utf8BOM is the three-byte UTF-8 byte order mark prefix.
+// Some editors (e.g. Windows Notepad) prepend this to UTF-8 files.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// StripBOM removes a leading UTF-8 BOM (\xEF\xBB\xBF) from data if present.
+// Returns the stripped bytes and a boolean indicating whether a BOM was found.
+//
+// Used by ReadConfig and schema parsing to handle BOM-prefixed files (ADV-06).
+// JSON parsers return an error on the BOM prefix — callers MUST strip before
+// passing to json.Unmarshal.
+//
+// Pure function; safe to call on empty or BOM-free input.
+func StripBOM(data []byte) ([]byte, bool) {
+	if len(data) >= 3 && data[0] == utf8BOM[0] && data[1] == utf8BOM[1] && data[2] == utf8BOM[2] {
+		return data[3:], true
+	}
+	return data, false
+}
+
+// emptySchema is the typed representation of an empty schema.json v1.
+// The Inputs field uses map[string]any to produce the exact `{}` encoding.
+type emptySchema struct {
+	Inputs map[string]any `json:"inputs"`
+}
+
+// collectionSkeleton is the typed representation of a minimal collection.json.
+// REQ-NC-01: {"version": 1, "schematics": {}}
+type collectionSkeleton struct {
+	Version    int            `json:"version"`
+	Schematics map[string]any `json:"schematics"`
+}
+
+// MarshalCollectionSkeleton returns the canonical byte sequence for an empty collection.json.
+//
+// Canonical form (REQ-NC-01):
+//
+//	{
+//	  "version": 1,
+//	  "schematics": {}
+//	}
+//
+// (Two-space indent, trailing newline, no BOM, no HTML escaping per L-builder-init-03.)
+//
+// Pure function; deterministic; no side effects; no I/O.
+func MarshalCollectionSkeleton() []byte {
+	v := collectionSkeleton{Version: 1, Schematics: map[string]any{}}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		panic("schema.MarshalCollectionSkeleton: unexpected encode error: " + err.Error())
+	}
+	return buf.Bytes()
+}
+
+// MarshalEmpty returns the canonical byte sequence for an empty schema.json.
+//
+// Canonical form (REQ-SJ-05):
+//
+//	{
+//	  "inputs": {}
+//	}
+//
+// (Two-space indent, trailing newline, no BOM, no HTML escaping per L-builder-init-03.)
+//
+// Pure function; deterministic; no side effects; no I/O.
+func MarshalEmpty() []byte {
+	v := emptySchema{Inputs: map[string]any{}}
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+
+	// Encode never fails for a fixed, valid struct — panic is unreachable in practice.
+	if err := enc.Encode(v); err != nil {
+		panic("schema.MarshalEmpty: unexpected encode error: " + err.Error())
+	}
+
+	return buf.Bytes()
+}
