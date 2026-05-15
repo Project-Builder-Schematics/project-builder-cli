@@ -65,6 +65,63 @@ func Test_RenderJSON_ProducesValidJSON(t *testing.T) {
 	}
 }
 
+// Test_WarnApproachingSchematicLimit verifies the soft warning message when the
+// inline schematic count reaches the threshold (REQ-NSI-04).
+func Test_WarnApproachingSchematicLimit(t *testing.T) {
+	t.Parallel()
+
+	// At threshold (10), the message must mention the collection and count.
+	msg := newfeature.WarnApproachingSchematicLimit("default", 10)
+	if msg == "" {
+		t.Fatal("WarnApproachingSchematicLimit: returned empty string at threshold 10")
+	}
+	if !strings.Contains(msg, "10") {
+		t.Errorf("WarnApproachingSchematicLimit: message does not mention count 10; got: %q", msg)
+	}
+	if !strings.Contains(msg, "default") {
+		t.Errorf("WarnApproachingSchematicLimit: message does not mention collection 'default'; got: %q", msg)
+	}
+}
+
+// Test_WarnApproachingSchematicLimit_Triangulate verifies a different count appears in the message.
+func Test_WarnApproachingSchematicLimit_Triangulate(t *testing.T) {
+	t.Parallel()
+
+	msg := newfeature.WarnApproachingSchematicLimit("my-col", 15)
+	if !strings.Contains(msg, "15") {
+		t.Errorf("WarnApproachingSchematicLimit: message does not mention count 15; got: %q", msg)
+	}
+	if !strings.Contains(msg, "my-col") {
+		t.Errorf("WarnApproachingSchematicLimit: message does not mention collection 'my-col'; got: %q", msg)
+	}
+}
+
+// Test_WarnApproachingFileSize verifies the soft warning message when project-builder.json
+// approaches the 20KB size limit (REQ-NSI-05).
+func Test_WarnApproachingFileSize(t *testing.T) {
+	t.Parallel()
+
+	// 20480 bytes = 20 KB.
+	msg := newfeature.WarnApproachingFileSize(20480)
+	if msg == "" {
+		t.Fatal("WarnApproachingFileSize: returned empty string at 20480 bytes")
+	}
+	if !strings.Contains(msg, "20") {
+		t.Errorf("WarnApproachingFileSize: message does not mention KB size (20); got: %q", msg)
+	}
+}
+
+// Test_WarnApproachingFileSize_Triangulate verifies a different byte size appears.
+func Test_WarnApproachingFileSize_Triangulate(t *testing.T) {
+	t.Parallel()
+
+	// 25600 bytes = 25 KB.
+	msg := newfeature.WarnApproachingFileSize(25600)
+	if !strings.Contains(msg, "25") {
+		t.Errorf("WarnApproachingFileSize: message does not mention KB size (25); got: %q", msg)
+	}
+}
+
 // Test_RenderJSON_DoesNotEscapeHTML verifies SetEscapeHTML(false) per L-builder-init-03.
 // Go's default json.Encoder replaces < with < and > with >.
 // With SetEscapeHTML(false) those Unicode escapes must NOT appear in the output.

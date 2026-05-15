@@ -12,6 +12,41 @@ import (
 	"io"
 )
 
+// InlineSchematicThreshold is the count at which a soft warning is emitted
+// for inline schematics in a collection (REQ-NSI-04).
+// Used by registerSchematicInline to decide whether to call WarnApproachingSchematicLimit.
+const InlineSchematicThreshold = 10
+
+// FileSizeThresholdBytes is the project-builder.json byte size at which a soft
+// warning is emitted (REQ-NSI-05). 20 KB = 20 * 1024.
+// Used by registerSchematicInline to decide whether to call WarnApproachingFileSize.
+const FileSizeThresholdBytes = 20 * 1024
+
+// WarnApproachingSchematicLimit returns a soft warning message when the inline
+// schematic count in a collection reaches or exceeds the threshold (REQ-NSI-04).
+//
+// The warning is routed through NewResult.Warnings → RenderPretty (ADR-019).
+// The caller (registerSchematicInline) calls this AFTER the write, appending
+// the result to NewResult.Warnings if the count is at or above the threshold.
+func WarnApproachingSchematicLimit(collection string, count int) string {
+	return fmt.Sprintf(
+		"collection '%s' now has %d inline schematics; consider --path mode for large collections",
+		collection, count,
+	)
+}
+
+// WarnApproachingFileSize returns a soft warning message when project-builder.json
+// exceeds the 20KB size limit after an inline write (REQ-NSI-05).
+//
+// bytes is the size of the file after write.
+func WarnApproachingFileSize(bytes int) string {
+	kb := bytes / 1024
+	return fmt.Sprintf(
+		"project-builder.json is now >%dKB; consider migrating schematics to path mode",
+		kb,
+	)
+}
+
 // RenderPretty writes a human-readable representation of result to w.
 // Dry-run mode emits a "DRY RUN" header followed by planned operations.
 // Real-write mode emits created files. Warnings are always emitted last.
