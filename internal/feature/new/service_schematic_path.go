@@ -1,8 +1,8 @@
 // Package newfeature — service_schematic_path.go implements path-mode schematic
-// scaffolding: factory.{ts|js} + schema.json + project-builder.json mutation.
+// scaffolding: factory.{ts|js} + schema.json + schema.d.ts + project-builder.json.
 //
 // REQ coverage:
-//   - REQ-NS-01: happy path TS — two files + JSON entry
+//   - REQ-NS-01: happy path TS — three files + JSON entry
 //   - REQ-NS-02: conflict without --force → ErrCodeNewSchematicExists
 //   - REQ-NS-03: --force overwrites existing schematic
 //   - REQ-NS-04: name validation → ErrCodeInvalidSchematicName
@@ -10,6 +10,7 @@
 //   - REQ-NS-06: --language=js → factory.js
 //   - REQ-PJ-01..08: project-builder.json mutation via projectconfig
 //   - REQ-SJ-01/03/05: schema.json canonical bytes via schema.MarshalEmpty
+//   - REQ-TG-01: schema.d.ts written alongside schema.json (S-003 wire-in)
 package newfeature
 
 import (
@@ -41,8 +42,8 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 		}
 	}
 
-	// 3. Write factory + schema files.
-	schematicDir, factoryPath, schemaPath, err := s.writeSchematicFiles(req, lang)
+	// 3. Write factory + schema.json + schema.d.ts files.
+	schematicDir, factoryPath, schemaPath, dtsPath, err := s.writeSchematicFiles(req, lang)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 
 	return &NewResult{
 		SchematicName: req.Name,
-		FilesCreated:  []string{factoryPath, schemaPath, pbPath},
+		FilesCreated:  []string{factoryPath, schemaPath, dtsPath, pbPath},
 	}, nil
 }
 
@@ -106,9 +107,9 @@ func (s *Service) checkSchematicConflict(req NewSchematicRequest, collection str
 	return nil
 }
 
-// writeSchematicFiles creates the schematic directory and writes factory + schema files.
-// Returns (schematicDir, factoryPath, schemaPath, error).
-func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (string, string, string, error) {
+// writeSchematicFiles creates the schematic directory and writes factory + schema
+// + schema.d.ts files. Returns (schematicDir, factoryPath, schemaPath, dtsPath, error).
+func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (string, string, string, string, error) {
 	schematicDir := filepath.Join(req.WorkDir, "schematics", req.Name)
 	ext := "ts"
 	if lang == "js" {
@@ -116,9 +117,10 @@ func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (str
 	}
 	factoryPath := filepath.Join(schematicDir, "factory."+ext)
 	schemaPath := filepath.Join(schematicDir, "schema.json")
+	dtsPath := filepath.Join(schematicDir, "schema.d.ts")
 
 	if err := s.fs.MkdirAll(schematicDir, 0o755); err != nil {
-		return "", "", "", &errs.Error{
+		return "", "", "", "", &errs.Error{
 			Code:    errs.ErrCodeInvalidInput,
 			Op:      "new.registerSchematicPath",
 			Message: "failed to create schematic directory",
@@ -128,11 +130,11 @@ func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (str
 
 	factoryBytes, err := RenderFactoryTemplate(lang, req.Name)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	if err := s.fs.WriteFile(factoryPath, factoryBytes, 0o644); err != nil {
-		return "", "", "", &errs.Error{
+		return "", "", "", "", &errs.Error{
 			Code:    errs.ErrCodeInvalidInput,
 			Op:      "new.registerSchematicPath",
 			Message: "failed to write factory." + ext,
@@ -141,7 +143,7 @@ func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (str
 	}
 
 	if err := s.fs.WriteFile(schemaPath, MarshalEmpty(), 0o644); err != nil {
-		return "", "", "", &errs.Error{
+		return "", "", "", "", &errs.Error{
 			Code:    errs.ErrCodeInvalidInput,
 			Op:      "new.registerSchematicPath",
 			Message: "failed to write schema.json",
@@ -149,7 +151,28 @@ func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (str
 		}
 	}
 
-	return schematicDir, factoryPath, schemaPath, nil
+	// Generate schema.d.ts via tsgen (REQ-TG-01 wire-in — S-003).
+	emptySchema := Schema{Inputs: map[string]InputSpec{}}
+	dtsBytes, err := GenerateDTS(req.Name, emptySchema)
+	if err != nil {
+		return "", "", "", "", &errs.Error{
+			Code:    errs.ErrCodeInvalidInput,
+			Op:      "new.registerSchematicPath",
+			Message: "failed to generate schema.d.ts",
+			Cause:   err,
+		}
+	}
+
+	if err := s.fs.WriteFile(dtsPath, dtsBytes, 0o644); err != nil {
+		return "", "", "", "", &errs.Error{
+			Code:    errs.ErrCodeInvalidInput,
+			Op:      "new.registerSchematicPath",
+			Message: "failed to write schema.d.ts",
+			Cause:   err,
+		}
+	}
+
+	return schematicDir, factoryPath, schemaPath, dtsPath, nil
 }
 
 // mutateProjectConfig reads project-builder.json, registers the schematic path,
