@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
 // Init orchestrates the five init outputs in write order per REQ-EC-05:
@@ -224,11 +225,8 @@ func (s *Service) dryRunSkillBlock(req InitRequest) error {
 // In dry-run mode, the dryRunFS intercepts this as a custom op type.
 // The actual package.json mutation is implemented in S-004.
 func recordDevDepOp(fs FSWriter, pkgJSONPath string) error {
-	type opRecorder interface {
-		recordOp(PlannedOp)
-	}
-	if r, ok := fs.(opRecorder); ok {
-		r.recordOp(PlannedOp{Op: "modify_devdep", Path: pkgJSONPath, Details: "@pbuilder/sdk ^1.0.0"})
+	if r, ok := fs.(fswriter.OpRecorder); ok {
+		r.RecordOp(PlannedOp{Op: "modify_devdep", Path: pkgJSONPath, Details: "@pbuilder/sdk ^1.0.0"})
 		return nil
 	}
 	// Fallback: use AppendFile to trigger a recorded op (for fakeFS tests).
@@ -239,21 +237,15 @@ func recordDevDepOp(fs FSWriter, pkgJSONPath string) error {
 // Records the intent to run `<pm> install --save-dev @pbuilder/sdk`.
 // The exact PM is omitted here (not yet detected in dry-run mode).
 func recordInstallOp(fs FSWriter) {
-	type opRecorder interface {
-		recordOp(PlannedOp)
-	}
-	if r, ok := fs.(opRecorder); ok {
-		r.recordOp(PlannedOp{Op: "install_package", Details: "@pbuilder/sdk (dev-dep) via detected PM"})
+	if r, ok := fs.(fswriter.OpRecorder); ok {
+		r.RecordOp(PlannedOp{Op: "install_package", Details: "@pbuilder/sdk (dev-dep) via detected PM"})
 	}
 }
 
 // recordMCPOp records a mcp_setup_offered PlannedOp via the FSWriter.
 // No path field — REQ-DR-02.
 func recordMCPOp(fs FSWriter) {
-	type opRecorder interface {
-		recordOp(PlannedOp)
-	}
-	if r, ok := fs.(opRecorder); ok {
-		r.recordOp(PlannedOp{Op: "mcp_setup_offered"})
+	if r, ok := fs.(fswriter.OpRecorder); ok {
+		r.RecordOp(PlannedOp{Op: "mcp_setup_offered"})
 	}
 }

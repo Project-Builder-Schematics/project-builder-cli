@@ -4,8 +4,9 @@ package initialise
 
 import (
 	"context"
-	"os"
 	"time"
+
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
 // MCPMode is the resolved value of the --mcp flag (REQ-MCP-01).
@@ -130,57 +131,15 @@ type InitResult struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// PlannedOp records a single intended file operation in dry-run mode.
-// The Op field uses a stable 5-value enum (REQ-DR-02).
-type PlannedOp struct {
-	// Op is the stable operation discriminator.
-	// Values: create_file | append_marker | modify_devdep | install_package | mcp_setup_offered
-	Op string `json:"op"`
-
-	// Path is the target file or directory path. Omitted for mcp_setup_offered.
-	Path string `json:"path,omitempty"`
-
-	// Details carries supplementary information (e.g. package name for install_package).
-	Details string `json:"details,omitempty"`
-}
-
 // FSWriter is the filesystem port for the init feature (ADR-020).
-// All filesystem I/O in the service layer MUST go through this interface.
-// Three implementations exist: osFS (real writes), dryRunFS (records PlannedOps),
-// fakeFS (in-memory, for tests).
-type FSWriter interface {
-	// Stat returns file metadata for path, or an error if the path does not
-	// exist or is not accessible.
-	Stat(path string) (os.FileInfo, error)
+// Promoted to internal/shared/fswriter — this alias preserves all existing
+// usages within package initialise without modification.
+type FSWriter = fswriter.FSWriter
 
-	// Lstat returns file metadata for path without following symlinks.
-	// Use this to detect whether a path is itself a symlink (REQ-AR-05).
-	Lstat(path string) (os.FileInfo, error)
-
-	// EvalSymlinks returns the path with all symlinks resolved.
-	// Returns an error if any component of the path does not exist.
-	// Use this to verify the resolved target stays within the project
-	// directory (REQ-AR-05 symlink-safety check).
-	EvalSymlinks(path string) (string, error)
-
-	// ReadFile returns the contents of path, or an error.
-	ReadFile(path string) ([]byte, error)
-
-	// WriteFile writes data to path with the given permissions.
-	// Implementations MUST use an atomic write (temp file + rename) to avoid
-	// partial writes (FF-init-02).
-	WriteFile(path string, data []byte, perm os.FileMode) error
-
-	// MkdirAll creates path and all parents with the given permissions.
-	MkdirAll(path string, perm os.FileMode) error
-
-	// AppendFile appends data to path, creating the file if it does not exist.
-	AppendFile(path string, data []byte) error
-
-	// PlannedOps returns the list of operations recorded in dry-run mode.
-	// Returns nil for non-dry-run implementations.
-	PlannedOps() []PlannedOp
-}
+// PlannedOp records a single intended file operation in dry-run mode.
+// Promoted to internal/shared/fswriter — this alias preserves all existing
+// usages within package initialise without modification.
+type PlannedOp = fswriter.PlannedOp
 
 // PackageManagerRunner is the port for package manager detection and install
 // (ADR-023). Implemented by realPM (S-005) and fakePM (tests).

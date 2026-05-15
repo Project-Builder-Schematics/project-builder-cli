@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
 // newRunE returns the RunE closure wired with svc for use by NewCommand.
@@ -84,7 +85,7 @@ func newRunE(svc *Service) func(*cobra.Command, []string) error {
 		// (REQ-DR-01, ADR-020).
 		activeSvc := svc
 		if dryRun {
-			activeSvc = NewService(newDryRunFS(), svc.pm, svc.skill)
+			activeSvc = NewService(fswriter.NewDryRunWriter(), svc.pm, svc.skill)
 		}
 
 		req := InitRequest{
