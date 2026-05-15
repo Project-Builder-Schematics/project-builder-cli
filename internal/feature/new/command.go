@@ -104,6 +104,11 @@ Use --dry-run to preview the planned operations without writing any files.`,
 	// REQ-NCP-01: --publishable generates lifecycle stubs (add/ + remove/).
 	flags.Bool("publishable", false, "generate add/ and remove/ lifecycle stubs")
 
+	// REQ-NCP-03: --inline must be registered so the handler can detect the
+	// --publishable+--inline conflict and return ErrCodeModeConflict rather than
+	// letting cobra reject the flag entirely as unknown.
+	flags.Bool("inline", false, "embed collection definition inline (conflicts with --publishable)")
+
 	// RunE adapter: extracts dryRun + jsonOut from flags, delegates to handleCollection.
 	handler := handleCollection(svc)
 	cmd.RunE = func(c *cobra.Command, args []string) error {

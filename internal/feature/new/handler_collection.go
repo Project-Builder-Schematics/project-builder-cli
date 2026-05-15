@@ -35,6 +35,13 @@ func handleCollection(svc *Service) func(cmd *cobra.Command, args []string, dryR
 
 		force, _ := flags.GetBool("force")
 		publishable, _ := flags.GetBool("publishable")
+		inline, _ := flags.GetBool("inline")
+
+		// Preflight: --publishable + --inline are mutually exclusive (REQ-NCP-03 / ADR-026).
+		// Guard runs before any service dispatch or OS call.
+		if err := CheckPublishableInlineConflict(publishable, inline); err != nil {
+			return err
+		}
 
 		// Resolve workspace root.
 		workDir, err := os.Getwd()
