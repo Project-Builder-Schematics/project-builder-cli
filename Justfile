@@ -2,7 +2,7 @@ default:
     @just --list
 
 build:
-    go build ./...
+    go build -o builder ./cmd/builder
 
 test:
     @if find cmd internal -name '*.go' 2>/dev/null | head -1 | grep -q .; then \
