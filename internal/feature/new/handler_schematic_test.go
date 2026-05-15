@@ -335,6 +335,186 @@ func Test_E2E_RenderPretty_ShowsCreatedFiles(t *testing.T) {
 	}
 }
 
+// ─── Inline mode E2E (REQ-NSI-01..05 + REQ-NS-07) ───────────────────────────
+
+// Test_E2E_Inline_HappyPath verifies inline mode creates no files and embeds the
+// schematic in project-builder.json (REQ-NSI-01 / REQ-PJ-06).
+func Test_E2E_Inline_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	result, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:    "my-inline",
+		WorkDir: dir,
+		Inline:  true,
+	})
+	if err != nil {
+		t.Fatalf("RegisterSchematic(inline): unexpected error: %v", err)
+	}
+	if result.DryRun {
+		t.Error("result.DryRun should be false")
+	}
+
+	// No files created under schematics/ (REQ-NSI-01).
+	schematicDir := filepath.Join(dir, "schematics", "my-inline")
+	for _, fname := range []string{"factory.ts", "factory.js", "schema.json", "schema.d.ts"} {
+		if fs.HasFile(filepath.Join(schematicDir, fname)) {
+			t.Errorf("inline mode: file %q MUST NOT be created", fname)
+		}
+	}
+
+	// project-builder.json has inline entry (REQ-PJ-06).
+	pbBytes, _ := fs.ReadFile(filepath.Join(dir, "project-builder.json"))
+	var pbMap map[string]json.RawMessage
+	if err := json.Unmarshal(pbBytes, &pbMap); err != nil {
+		t.Fatalf("parse project-builder.json: %v", err)
+	}
+	var cols map[string]json.RawMessage
+	if err := json.Unmarshal(pbMap["collections"], &cols); err != nil {
+		t.Fatalf("parse collections: %v", err)
+	}
+	defColl, ok := cols["default"]
+	if !ok {
+		t.Fatal("collections.default missing")
+	}
+	var defMap map[string]json.RawMessage
+	if err := json.Unmarshal(defColl, &defMap); err != nil {
+		t.Fatalf("parse default: %v", err)
+	}
+	schematicsRaw, ok := defMap["schematics"]
+	if !ok {
+		t.Fatal("collections.default.schematics missing (inline entries nest here)")
+	}
+	var schMap map[string]json.RawMessage
+	if err := json.Unmarshal(schematicsRaw, &schMap); err != nil {
+		t.Fatalf("parse schematics: %v", err)
+	}
+	schEntry, ok := schMap["my-inline"]
+	if !ok {
+		t.Fatal("collections.default.schematics.my-inline missing")
+	}
+	var entryMap map[string]json.RawMessage
+	if err := json.Unmarshal(schEntry, &entryMap); err != nil {
+		t.Fatalf("parse inline entry: %v", err)
+	}
+	if _, hasInputs := entryMap["inputs"]; !hasInputs {
+		t.Errorf("inline entry missing 'inputs' key; got: %s", schEntry)
+	}
+
+	// version preserved (R-RES-1).
+	if !strings.Contains(string(pbBytes), `"version": "1"`) {
+		t.Errorf("version coerced (R-RES-1 violation); got: %s", pbBytes)
+	}
+}
+
+// Test_E2E_Inline_ConflictNoForce verifies ErrCodeNewSchematicExists + zero writes
+// when inline entry exists and --force is absent (REQ-NSI-02).
+func Test_E2E_Inline_ConflictNoForce(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	req := newfeature.NewSchematicRequest{
+		Name:    "my-inline",
+		WorkDir: dir,
+		Inline:  true,
+	}
+
+	// First call succeeds.
+	if _, err := invokeRegisterSchematic(t, svc, req); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	countAfterFirst := fs.FileCount()
+
+	// Second call without --force must fail.
+	_, err := invokeRegisterSchematic(t, svc, req)
+	if err == nil {
+		t.Fatal("expected ErrCodeNewSchematicExists; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("error not *errs.Error; got: %T %v", err, err)
+	}
+	if e.Code != errs.ErrCodeNewSchematicExists {
+		t.Errorf("code = %q; want %q", e.Code, errs.ErrCodeNewSchematicExists)
+	}
+	if fs.FileCount() != countAfterFirst {
+		t.Errorf("file count changed on conflict (%d→%d)", countAfterFirst, fs.FileCount())
+	}
+}
+
+// Test_E2E_Inline_ForceOverwrite verifies --force overwrites existing inline entry
+// (REQ-NSI-03).
+func Test_E2E_Inline_ForceOverwrite(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	base := newfeature.NewSchematicRequest{Name: "my-inline", WorkDir: dir, Inline: true}
+
+	if _, err := invokeRegisterSchematic(t, svc, base); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	base.Force = true
+	if _, err := invokeRegisterSchematic(t, svc, base); err != nil {
+		t.Errorf("--force overwrite: unexpected error: %v", err)
+	}
+}
+
+// Test_E2E_Inline_ModeConflict_PathExists verifies ErrCodeModeConflict when path
+// entry exists and --inline is requested (REQ-NS-07 / ADV-10).
+func Test_E2E_Inline_ModeConflict_PathExists(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	// Create a path-mode schematic first.
+	if _, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     "my-sch",
+		Language: "ts",
+		WorkDir:  dir,
+	}); err != nil {
+		t.Fatalf("path setup: %v", err)
+	}
+
+	// --inline --force must still fail with ErrCodeModeConflict.
+	_, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:    "my-sch",
+		WorkDir: dir,
+		Inline:  true,
+		Force:   true,
+	})
+	if err == nil {
+		t.Fatal("expected ErrCodeModeConflict; got nil")
+	}
+
+	var e *errs.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("error not *errs.Error; got: %T %v", err, err)
+	}
+	if e.Code != errs.ErrCodeModeConflict {
+		t.Errorf("code = %q; want %q", e.Code, errs.ErrCodeModeConflict)
+	}
+
+	// Message must name "builder remove" (REQ-EC-05).
+	mentionsRemove := strings.Contains(e.Message, "builder remove")
+	for _, s := range e.Suggestions {
+		if strings.Contains(s, "builder remove") {
+			mentionsRemove = true
+		}
+	}
+	if !mentionsRemove {
+		t.Errorf("ErrCodeModeConflict does not mention 'builder remove'; message: %q", e.Message)
+	}
+}
+
 // Test_E2E_Warnings_DtsDeferred verifies the .d.ts deferred WARN is present
 // in the result (REQ-TG stub; .d.ts lands in S-003).
 // The service populates result.Warnings; the handler renders them.
