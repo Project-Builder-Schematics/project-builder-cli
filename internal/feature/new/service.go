@@ -1,13 +1,9 @@
 // Package newfeature — service.go contains Service, the orchestrator for
 // the `builder new` feature.
 //
-// S-000b walking skeleton scope:
-//   - RegisterSchematic and RegisterCollection return ErrCodeNewNotImplemented.
-//   - Real logic for schematic path-mode lands in S-001.
-//   - Real logic for collection lands in S-004.
-//
-// The stub sentinel ErrCodeNewNotImplemented (REQ-EC-07) will be REMOVED at
-// archive time once all slices are complete.
+// Service dispatches to mode-specific helpers in service_schematic_path.go,
+// service_schematic_inline.go, service_collection.go, and service_publishable.go.
+// Preflight guards (mode-conflict detection) run inside Service methods before dispatch.
 package newfeature
 
 import (
@@ -88,26 +84,12 @@ func (s *Service) checkModeConflict(req NewSchematicRequest) error {
 //  1. Mode-conflict: --publishable + --inline → REJECT (REQ-NCP-03 / REQ-EC-05)
 //  2. Dispatch to createCollection or createPublishableCollection based on req.Publishable
 func (s *Service) RegisterCollection(ctx context.Context, req NewCollectionRequest) (*NewResult, error) {
-	// Shared preflight: publishable + inline are mutually exclusive (REQ-NCP-03).
-	// NOTE: NewCollectionRequest does not have an Inline field — this guard exists for
-	// the handler which may wire --inline from the command flags in future. For now,
-	// --inline is not surfaced on the collection command, so this preflight is future-safe.
+	// Preflight guard for --publishable+--inline is in the handler (handler_collection.go),
+	// not here, because NewCollectionRequest has no Inline field. The handler calls
+	// CheckPublishableInlineConflict before building the request (ADR-026).
 
 	if req.Publishable {
 		return s.createPublishableCollection(ctx, req)
 	}
 	return s.createCollection(ctx, req)
-}
-
-// notImplementedErr returns the stub sentinel error for unimplemented subcommands.
-// Op is "new.handler" — consistent with the handler origin convention.
-func notImplementedErr(subcommand string) error {
-	return &errs.Error{
-		Code:    errs.ErrCodeNewNotImplemented,
-		Op:      "new.handler",
-		Message: subcommand + ": not yet implemented in this build",
-		Suggestions: []string{
-			"this feature is planned for a future slice (builder-new S-001..S-004)",
-		},
-	}
 }
