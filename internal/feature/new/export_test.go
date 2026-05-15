@@ -22,3 +22,15 @@ func SetLanguageDetectFn(t testing.TB, fn func(dir string) (string, error)) {
 	languageDetectFn = fn
 	t.Cleanup(func() { languageDetectFn = orig })
 }
+
+// SetTTYCheckFn replaces the ttyCheckFn for the duration of t.
+// ttyCheckFn is declared in extends.go (production file).
+//
+// Use this in tests that need deterministic TTY detection without depending
+// on the real stdin state (which varies by shell, CI, WSL2 environment).
+func SetTTYCheckFn(t testing.TB, fn func() bool) {
+	t.Helper()
+	orig := ttyCheckFn
+	ttyCheckFn = fn
+	t.Cleanup(func() { ttyCheckFn = orig })
+}

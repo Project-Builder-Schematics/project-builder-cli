@@ -130,15 +130,22 @@ func Test_ValidateExtendsGrammar_ErrorMessage(t *testing.T) {
 	}
 }
 
-// Test_IsInteractiveTTY_NonTTY verifies that IsInteractiveTTY returns false
-// when stdin is not a TTY (REQ-EX-05 non-interactive path).
-func Test_IsInteractiveTTY_NonTTY(t *testing.T) {
+// Test_IsInteractiveTTY_Seam verifies that the ttyCheckFn injection seam
+// correctly overrides the TTY detection for test isolation (REQ-EX-04/05).
+// Uses SetTTYCheckFn from export_test.go to avoid dependency on real stdin state.
+func Test_IsInteractiveTTY_Seam(t *testing.T) {
 	t.Parallel()
 
-	// In a test process, stdin is never a real TTY.
-	// So IsInteractiveTTY() should return false.
+	// Override TTY check to return false (simulates non-TTY / CI environment).
+	newfeature.SetTTYCheckFn(t, func() bool { return false })
 	if newfeature.IsInteractiveTTY() {
-		t.Error("IsInteractiveTTY(): expected false in test environment (not a real TTY)")
+		t.Error("IsInteractiveTTY(): expected false when seam returns false")
+	}
+
+	// Override TTY check to return true (simulates interactive terminal).
+	newfeature.SetTTYCheckFn(t, func() bool { return true })
+	if !newfeature.IsInteractiveTTY() {
+		t.Error("IsInteractiveTTY(): expected true when seam returns true")
 	}
 }
 
