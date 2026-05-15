@@ -86,6 +86,85 @@ Verify your local hooks are wired correctly before opening the first PR:
 
 If either hook does not fire, re-run `lefthook install` and confirm `.git/hooks/{pre-commit,commit-msg}` exist.
 
+## Versioning and Releases
+
+This project uses automated SemVer bumping on every merge to `main`.
+
+### 0.x convention
+
+The project is in the `0.x` phase (pre-GA). During this phase:
+
+- **`bump:minor`** — any change that introduces a new top-level command (e.g. `builder execute`, `builder add`). Also use for BREAKING CHANGES while `major == 0` (e.g. removing or renaming a flag that users depend on). Under 0.x, breaking changes do NOT trigger a major bump — that decision is reserved for the explicit v1.0.0 cut.
+- **`bump:patch`** — everything else: improvements, bug fixes, refactors, docs updates, internal tooling, dependency updates. When in doubt, use `bump:patch`.
+
+The jump from `v0.x.y` to `v1.0.0` is a deliberate, human, manual decision tied to the v1.0 GA feature bundle — it is NOT automated.
+
+### PR label policy
+
+Every PR **must** carry exactly one of `bump:minor` or `bump:patch` before merging. The CI job `bump-label-validation` enforces this — a PR with zero labels or both labels will fail CI and cannot be merged.
+
+**Examples:**
+
+| Change | Correct label |
+|---|---|
+| New top-level command `builder execute` | `bump:minor` |
+| Removing `--config` flag (breaking while `major == 0`) | `bump:minor` |
+| Bug fix in `builder init` | `bump:patch` |
+| Refactor internal packages | `bump:patch` |
+| Update Go dependency | `bump:patch` |
+| Docs / CONTRIBUTING update | `bump:patch` |
+
+Add the label via GitHub UI (PR sidebar → Labels) or:
+```sh
+gh pr edit <number> --add-label bump:patch
+```
+
+### How the automation works
+
+On merge to `main`, the `Release` workflow (`release.yml`) runs as `github-actions[bot]`:
+
+1. Reads the merged PR's bump label.
+2. Reads the current `const Version` from `cmd/builder/version.go`.
+3. Calls `scripts/release/bump-version.sh` to compute the new version.
+4. Updates `cmd/builder/version.go`, commits `chore(release): vX.Y.Z`, and pushes to `main`.
+5. Creates an annotated tag `vX.Y.Z` and a GitHub Release.
+
+The bot's own commit fires a second `push: main` event, which is suppressed by the job-level guard `if: github.actor != 'github-actions[bot]'` — no infinite loop.
+
+Direct pushes to `main` (admin hotfixes without a PR) are detected and skipped cleanly — no tag is created.
+
+### Wrong-tag recovery procedure (REQ-CVA-033)
+
+If a wrong tag is pushed by the automation:
+
+1. **Delete the GitHub Release** (safe — does not delete the tag):
+   ```sh
+   gh release delete vX.Y.Z --yes
+   ```
+
+2. **Leave the git tag in place** if at all possible. Git tags are part of the shared history of every collaborator's clone. Silently force-deleting a tag from the remote (`git push origin :refs/tags/vX.Y.Z`) will leave stale references in clones — coordinate with the team before doing this.
+
+3. **If you must delete the tag** (e.g. the tagged commit itself was wrong), notify all contributors first, then:
+   ```sh
+   git push origin :refs/tags/vX.Y.Z     # delete remote tag
+   git tag -d vX.Y.Z                     # delete local tag
+   ```
+   Ask collaborators to also run `git tag -d vX.Y.Z` locally.
+
+4. **Fix the root cause** (wrong label on the merged PR, bug in the release script) in a hotfix PR with a `bump:patch` label.
+
+5. The next qualifying merge will produce the correct next version based on the current `const Version` in `cmd/builder/version.go`. If the deleted tag's version was consumed, the next bump will naturally skip past it.
+
+### Manually testing bump arithmetic
+
+```sh
+just test-bump      # runs scripts/release/bump-version.test.sh (10 cases)
+```
+
+### Disabling the automation (emergency)
+
+GitHub UI → Actions → `Release` → Disable workflow. The workflow can be re-enabled after a fix is merged.
+
 ## SDD pipeline
 
 This project uses Specification-Driven Development (SDD): every non-trivial change goes through `triage → explore → propose → spec → design → slice → apply → verify → archive`. The pipeline conventions live in the repo's [GitHub Discussions](https://github.com/Project-Builder-Schematics/project-builder-cli/discussions) (#2–#5 cover triage classifications, persona lenses, and slice format).

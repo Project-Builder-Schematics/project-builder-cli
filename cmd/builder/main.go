@@ -95,6 +95,7 @@ Run 'builder <command> --help' for command-specific usage.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	root.Version = Version
 
 	// --output persistent flag (REQ-14): propagated to all sub-commands.
 	// Default is "" (OutputModeAuto) — factory resolves via TTY detection.
@@ -179,7 +180,10 @@ func main() {
 	// fang.Execute wraps Cobra's Execute with styled help, error, and
 	// version output (charmbracelet aesthetics). Tests still drive
 	// app.Root.Execute() directly to keep assertions deterministic.
-	if err := fang.Execute(context.Background(), app.Root); err != nil {
+	//
+	// WithVersion injects the compile-time Version const so fang does not
+	// fall back to "unknown (built from source)" (REQ-CVA-004).
+	if err := fang.Execute(context.Background(), app.Root, fang.WithVersion(Version)); err != nil {
 		os.Exit(exitCodeForErr(err))
 	}
 }

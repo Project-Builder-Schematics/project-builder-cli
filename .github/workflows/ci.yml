@@ -5,10 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, reopened, synchronize, labeled, unlabeled]
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +37,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +53,8 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -62,6 +69,8 @@ jobs:
 
   smoke:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -104,13 +113,6 @@ jobs:
           git diff --exit-code || { echo "just fmt not idempotent"; exit 1; }
           echo "fmt: idempotent"
 
-      - name: smoke (release.yml deferred stub)
-        run: |
-          set -euo pipefail
-          grep -E '^# DEFERRED.*see issue #[0-9]+' .github/workflows/release.yml \
-            || { echo "release.yml missing DEFERRED comment with issue ref"; exit 1; }
-          echo "release.yml: deferred stub OK"
-
       - name: architectural (no unpinned uses in workflows)
         run: |
           set -euo pipefail
@@ -123,6 +125,8 @@ jobs:
   fitness:
     needs: [lint, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -137,3 +141,33 @@ jobs:
 
       - name: fitness-meta (each function catches its bad-pattern fixture)
         run: just fitness-meta
+
+  bump-label-validation:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
+      contents: read
+    steps:
+      - name: Validate exactly one bump label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Fetch current labels via API at job-execution time (NOT from event payload).
+          # Event payload labels are a snapshot at fire-time and can be empty when the
+          # 'opened' event races with label application (e.g. `gh pr create --label`).
+          # API fetch is authoritative and timing-independent. Anti-injection preserved:
+          # label names never appear inline in run blocks — only flow via jq + env vars.
+          LABELS_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels')
+          bump_count=$(printf '%s' "$LABELS_JSON" | jq '[.[] | select(.name == "bump:minor" or .name == "bump:patch")] | length')
+          if [ "$bump_count" -eq 0 ]; then
+            echo "::error::PR must have exactly one of bump:minor or bump:patch labels. Found: 0. Add the appropriate label per the project's bump policy."
+            exit 1
+          fi
+          if [ "$bump_count" -eq 2 ]; then
+            echo "::error::PR cannot have both bump:minor and bump:patch labels. Choose one per the project's bump policy — they are mutually exclusive."
+            exit 1
+          fi
+          echo "Exactly one bump label found. OK."
