@@ -75,6 +75,31 @@ func Test_Service_RegisterCollection_DryRun_ReturnsEmptyResult(t *testing.T) {
 	}
 }
 
+// Test_Service_RegisterCollection_Publishable_DryRun_HasLifecycleOps verifies
+// that the --publishable dry-run path returns more planned ops than the non-publishable
+// path (add/ + remove/ lifecycle stubs).
+func Test_Service_RegisterCollection_Publishable_DryRun_HasLifecycleOps(t *testing.T) {
+	t.Parallel()
+
+	svc := newfeature.NewService(fswriter.NewDryRunWriter())
+	req := newfeature.NewCollectionRequest{Name: "bar", DryRun: true, Publishable: true}
+
+	result, err := svc.RegisterCollection(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RegisterCollection(publishable, dry-run): unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if !result.DryRun {
+		t.Error("result.DryRun = false; want true")
+	}
+	// Publishable should have at least 7 planned ops: collection.json + 3×add + 3×remove.
+	if len(result.PlannedOps) < 7 {
+		t.Errorf("publishable dry-run: expected ≥7 PlannedOps; got %d", len(result.PlannedOps))
+	}
+}
+
 // Test_Service_RegisterCollection_DryRun_HasPlannedOps verifies that the S-004 real
 // implementation returns DryRun=true with non-empty PlannedOps in dry-run mode (REQ-NC-06).
 // Replaces the S-000b stub sentinel test (ErrCodeNewNotImplemented removed in S-004).
