@@ -107,8 +107,9 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 	}
 
 	// Strip UTF-8 BOM if present (ADV-06: some editors prepend \xEF\xBB\xBF).
-	// Note: WARN surfacing for BOM detection is implemented in Group B (next commit).
-	data, _ = StripBOM(data)
+	// The stripped-BOM warning is accumulated in cfg.Warnings for Renderer output
+	// (ADR-019 — NEVER fmt.Fprintf). Callers propagate cfg.Warnings → result.Warnings.
+	data, hadBOM := StripBOM(data)
 
 	// First pass: decode into a flat map to capture ALL top-level keys.
 	var rawMap map[string]json.RawMessage
@@ -126,6 +127,12 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 		Inlines:         make(map[string]map[string]json.RawMessage),
 		CollectionPaths: make(map[string]string),
 		Extra:           make(map[string]json.RawMessage),
+	}
+
+	// Emit BOM-strip warning (ADV-06 / ADR-019).
+	// The caller propagates cfg.Warnings → NewResult.Warnings → Renderer.
+	if hadBOM {
+		cfg.Warnings = append(cfg.Warnings, "project-builder.json: UTF-8 BOM detected and stripped")
 	}
 
 	// Extract known fields by key; put everything else in Extra.

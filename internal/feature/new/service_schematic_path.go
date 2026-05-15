@@ -74,7 +74,7 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 		}, nil
 	}
 
-	pbPath, err := s.mutateProjectConfig(req, collection, req.Name)
+	pbPath, cfgWarns, err := s.mutateProjectConfig(req, collection, req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +88,9 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 	if langWarn != "" {
 		result.Warnings = append(result.Warnings, langWarn)
 	}
+
+	// Propagate BOM-strip warning (ADV-06) from ReadConfig through NewResult.Warnings.
+	result.Warnings = append(result.Warnings, cfgWarns...)
 
 	return result, nil
 }
@@ -267,20 +270,22 @@ func (s *Service) writeSchematicFiles(req NewSchematicRequest, lang string) (str
 }
 
 // mutateProjectConfig reads project-builder.json, registers the schematic path,
-// and writes back. Returns the absolute path of project-builder.json.
-func (s *Service) mutateProjectConfig(req NewSchematicRequest, collection, name string) (string, error) {
+// and writes back. Returns (pbPath, warnings, error).
+// warnings carries non-fatal issues from ReadConfig (e.g. BOM-strip per ADV-06).
+func (s *Service) mutateProjectConfig(req NewSchematicRequest, collection, name string) (string, []string, error) {
 	cfg, err := ReadConfig(req.WorkDir, s.fs)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
+	cfgWarns := cfg.Warnings
 	relPath := filepath.ToSlash("./schematics/" + name)
 	if err := RegisterSchematicPath(cfg, collection, name, relPath); err != nil {
-		return "", err
+		return "", cfgWarns, err
 	}
 	if err := WriteConfig(req.WorkDir, cfg, s.fs); err != nil {
-		return "", err
+		return "", cfgWarns, err
 	}
-	return filepath.Join(req.WorkDir, "project-builder.json"), nil
+	return filepath.Join(req.WorkDir, "project-builder.json"), cfgWarns, nil
 }
 
 // validateSchematicName returns ErrCodeInvalidSchematicName if name is invalid.
