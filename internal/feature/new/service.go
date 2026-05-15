@@ -32,15 +32,31 @@ func NewService(fs fswriter.FSWriter) *Service {
 
 // RegisterSchematic is the orchestration entry-point for `builder new schematic`.
 //
-// S-000b: stub — returns ErrCodeNewNotImplemented. Real implementation lands in S-001.
-func (s *Service) RegisterSchematic(_ context.Context, _ NewSchematicRequest) (*NewResult, error) {
+// S-000b: dry-run returns an empty planned-ops result (exit 0) per REQ-NS-05 partial smoke.
+// Non-dry-run returns ErrCodeNewNotImplemented. Real implementation lands in S-001.
+func (s *Service) RegisterSchematic(_ context.Context, req NewSchematicRequest) (*NewResult, error) {
+	if req.DryRun {
+		return &NewResult{
+			DryRun:        true,
+			PlannedOps:    s.fs.PlannedOps(),
+			SchematicName: req.Name,
+		}, nil
+	}
 	return nil, notImplementedErr("new schematic")
 }
 
 // RegisterCollection is the orchestration entry-point for `builder new collection`.
 //
-// S-000b: stub — returns ErrCodeNewNotImplemented. Real implementation lands in S-004.
-func (s *Service) RegisterCollection(_ context.Context, _ NewCollectionRequest) (*NewResult, error) {
+// S-000b: dry-run returns an empty planned-ops result (exit 0) per REQ-NC-06.
+// Non-dry-run returns ErrCodeNewNotImplemented. Real implementation lands in S-004.
+func (s *Service) RegisterCollection(_ context.Context, req NewCollectionRequest) (*NewResult, error) {
+	if req.DryRun {
+		return &NewResult{
+			DryRun:         true,
+			PlannedOps:     s.fs.PlannedOps(),
+			CollectionName: req.Name,
+		}, nil
+	}
 	return nil, notImplementedErr("new collection")
 }
 

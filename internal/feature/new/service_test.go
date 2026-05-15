@@ -17,17 +17,37 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
-// Test_Service_RegisterSchematic_ReturnsErrNewNotImplemented verifies that the
-// S-000b stub returns ErrCodeNewNotImplemented (REQ-EC-07).
-func Test_Service_RegisterSchematic_ReturnsErrNewNotImplemented(t *testing.T) {
+// Test_Service_RegisterSchematic_DryRun_ReturnsEmptyResult verifies that the
+// S-000b dry-run path returns a valid result with DryRun=true (REQ-NS-05 partial smoke).
+func Test_Service_RegisterSchematic_DryRun_ReturnsEmptyResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newfeature.NewService(fswriter.NewDryRunWriter())
 	req := newfeature.NewSchematicRequest{Name: "my-schematic", DryRun: true}
 
+	result, err := svc.RegisterSchematic(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RegisterSchematic(dry-run): unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("RegisterSchematic(dry-run): result is nil")
+	}
+	if !result.DryRun {
+		t.Errorf("RegisterSchematic(dry-run): result.DryRun = false; want true")
+	}
+}
+
+// Test_Service_RegisterSchematic_NonDryRun_ReturnsErrNewNotImplemented verifies
+// that the S-000b stub returns ErrCodeNewNotImplemented for non-dry-run (REQ-EC-07).
+func Test_Service_RegisterSchematic_NonDryRun_ReturnsErrNewNotImplemented(t *testing.T) {
+	t.Parallel()
+
+	svc := newfeature.NewService(fswriter.NewDryRunWriter())
+	req := newfeature.NewSchematicRequest{Name: "my-schematic", DryRun: false}
+
 	_, err := svc.RegisterSchematic(context.Background(), req)
 	if err == nil {
-		t.Fatal("RegisterSchematic: expected ErrCodeNewNotImplemented, got nil")
+		t.Fatal("RegisterSchematic(non-dry-run): expected ErrCodeNewNotImplemented, got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNewNotImplemented}
@@ -44,17 +64,37 @@ func Test_Service_RegisterSchematic_ReturnsErrNewNotImplemented(t *testing.T) {
 	}
 }
 
-// Test_Service_RegisterCollection_ReturnsErrNewNotImplemented verifies that the
-// S-000b stub returns ErrCodeNewNotImplemented (REQ-EC-07).
-func Test_Service_RegisterCollection_ReturnsErrNewNotImplemented(t *testing.T) {
+// Test_Service_RegisterCollection_DryRun_ReturnsEmptyResult verifies that the
+// S-000b dry-run path returns a valid result with DryRun=true (REQ-NC-06).
+func Test_Service_RegisterCollection_DryRun_ReturnsEmptyResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newfeature.NewService(fswriter.NewDryRunWriter())
 	req := newfeature.NewCollectionRequest{Name: "my-collection", DryRun: true}
 
+	result, err := svc.RegisterCollection(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RegisterCollection(dry-run): unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("RegisterCollection(dry-run): result is nil")
+	}
+	if !result.DryRun {
+		t.Errorf("RegisterCollection(dry-run): result.DryRun = false; want true")
+	}
+}
+
+// Test_Service_RegisterCollection_NonDryRun_ReturnsErrNewNotImplemented verifies
+// that the S-000b stub returns ErrCodeNewNotImplemented for non-dry-run (REQ-EC-07).
+func Test_Service_RegisterCollection_NonDryRun_ReturnsErrNewNotImplemented(t *testing.T) {
+	t.Parallel()
+
+	svc := newfeature.NewService(fswriter.NewDryRunWriter())
+	req := newfeature.NewCollectionRequest{Name: "my-collection", DryRun: false}
+
 	_, err := svc.RegisterCollection(context.Background(), req)
 	if err == nil {
-		t.Fatal("RegisterCollection: expected ErrCodeNewNotImplemented, got nil")
+		t.Fatal("RegisterCollection(non-dry-run): expected ErrCodeNewNotImplemented, got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNewNotImplemented}
