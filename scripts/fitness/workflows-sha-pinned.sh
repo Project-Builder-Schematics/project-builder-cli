@@ -30,10 +30,10 @@ line_num=0
 
 while IFS= read -r line; do
   line_num=$((line_num + 1))
-  # Check if the line contains a `uses:` entry
-  if printf '%s' "$line" | grep -qE '^\s+uses:\s+\S'; then
+  # Check if the line contains a `uses:` entry (either `uses:` or `- uses:` list-item form)
+  if printf '%s' "$line" | grep -qE '^\s+-?\s*uses:\s+\S'; then
     # Extract the reference part after `uses: `
-    ref=$(printf '%s' "$line" | sed -E 's/^\s+uses:\s+//' | sed 's/#.*//' | tr -d '[:space:]')
+    ref=$(printf '%s' "$line" | sed -E 's/^\s+-?\s*uses:\s+//' | sed 's/#.*//' | tr -d '[:space:]')
     # A valid SHA-pinned reference must end with @<40-hex-chars>
     # Extract what comes after the last @
     after_at=$(printf '%s' "$ref" | grep -oE '@[^@]*$' | sed 's/@//')
