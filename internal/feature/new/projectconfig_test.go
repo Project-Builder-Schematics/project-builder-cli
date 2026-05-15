@@ -718,6 +718,39 @@ func Test_ADV06_BOMInProjectBuilderJSON(t *testing.T) {
 	}
 }
 
+// Test_ADV06_BOMWarn verifies that ReadConfig emits a Warning when a UTF-8 BOM
+// is detected and stripped (ADV-06 / ADR-019).
+//
+// The WARN must appear in cfg.Warnings so the caller can propagate it to
+// NewResult.Warnings for rendering via the Renderer (not via fmt.Fprintf).
+func Test_ADV06_BOMWarn(t *testing.T) {
+	t.Parallel()
+
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	bomContent := append(bom, []byte(minimalPBJSON)...)
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, string(bomContent), fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ADV-06: ReadConfig with BOM prefix: unexpected error: %v", err)
+	}
+
+	// cfg.Warnings must contain a message mentioning "BOM".
+	hasBOMWarn := false
+	for _, w := range cfg.Warnings {
+		if strings.Contains(strings.ToLower(w), "bom") {
+			hasBOMWarn = true
+			break
+		}
+	}
+	if !hasBOMWarn {
+		t.Errorf("ADV-06: ReadConfig with BOM prefix: expected a Warning mentioning 'BOM' in cfg.Warnings; got: %v", cfg.Warnings)
+	}
+}
+
 // Test_ADV07_ConcurrentWrites verifies that concurrent RegisterSchematic calls
 // do not produce a data race (ADV-07).
 //

@@ -76,6 +76,11 @@ type Config struct {
 	// Extra holds all OTHER top-level fields not explicitly decoded above.
 	// They are written back verbatim on WriteConfig (REQ-PJ-04).
 	Extra map[string]json.RawMessage
+
+	// Warnings accumulates non-fatal issues discovered during ReadConfig.
+	// Callers propagate these into NewResult.Warnings so Renderer prints them
+	// (ADR-019). Example: UTF-8 BOM detected and stripped (ADV-06).
+	Warnings []string
 }
 
 // schematicPathEntry is the JSON shape for a path-mode schematic registration.
