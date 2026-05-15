@@ -1,16 +1,161 @@
-# DEFERRED — see issue #8 for the multi-platform binary release implementation.
-# This workflow is intentionally inert: workflow_dispatch only, single no-op job.
-# The file claims the canonical path so future work does not bikeshed where the
-# release lives.
-
 name: Release
+# Enforces: cli-versioning-automation REQ-CVA-015..029, REQ-CVA-031..032, REQ-CVA-042..043
+#
+# Triggered on every push to main. The bump job:
+#   1. Detects if the push came from a merged PR (skips cleanly on direct push)
+#   2. Reads the PR's bump label (bump:minor or bump:patch)
+#   3. Reads the current version from cmd/builder/version.go
+#   4. Delegates arithmetic to scripts/release/bump-version.sh
+#   5. Updates the const, commits as github-actions[bot], pushes tag + release
+#
+# Anti-loop: job-level `if: github.actor != 'github-actions[bot]'` is the
+# AUTHORITATIVE guard. [skip-bump] in commit messages is DECORATIVE ONLY.
+# See: ADR-028, REQ-CVA-022, REQ-CVA-024.
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+
+# REQ-CVA-026: concurrency group prevents two releases racing on rapid pushes.
+# cancel-in-progress MUST be false — cancelling mid-run leaves partial tags.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  noop:
+  bump:
     runs-on: ubuntu-latest
+    # REQ-CVA-022: anti-loop guard at JOB level with != operator.
+    # When the bot commits the version bump, github.actor is 'github-actions[bot]'
+    # and this entire job is skipped — no steps run, no second bump fires.
+    if: github.actor != 'github-actions[bot]'
+    # REQ-CVA-021, REQ-CVA-025: job-level permissions, minimal scope.
+    # No top-level permissions block (see top of file — absent by design).
+    # pull-requests: read is explicit for `gh pr list` portability (private repos).
+    permissions:
+      contents: write
+      pull-requests: read
     steps:
-      - name: deferred notice
-        run: echo "release.yml is deferred — see https://github.com/Project-Builder-Schematics/project-builder-cli/issues/8"
+      # REQ-CVA-027: SHA-pinned to actions/checkout v4.2.2 (40-char SHA).
+      # Two-tier policy: release.yml is Tier 1 (mandatory SHA pin). ADR-030.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git for bot commits
+        # REQ-CVA-043: bot identity for audit traceability.
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Read current version from version.go
+        id: current
+        run: |
+          # Extract: const Version = "vX.Y.Z" from cmd/builder/version.go
+          current=$(grep -E '^const Version = "v[0-9]+\.[0-9]+\.[0-9]+"$' cmd/builder/version.go \
+            | sed -E 's/^const Version = "(v[0-9]+\.[0-9]+\.[0-9]+)"$/\1/')
+          if [ -z "$current" ]; then
+            echo "::error::Failed to parse Version from cmd/builder/version.go — check const format"
+            exit 1
+          fi
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Find merged PR for this commit
+        id: pr
+        # REQ-CVA-016: use HEAD SHA to find the merged PR robustly (squash/rebase safe).
+        # REQ-CVA-016.3: direct push (no PR) → skip cleanly with exit 0.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          pr_number=$(gh pr list --state merged --search "$HEAD_SHA" --json number --jq '.[0].number // empty')
+          if [ -z "$pr_number" ]; then
+            echo "No merged PR associated with $HEAD_SHA — direct push or admin commit. Skipping bump."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Read PR labels and determine bump type
+        if: steps.pr.outputs.skip != 'true'
+        id: bump
+        # REQ-CVA-014: labels read via env var (GH_TOKEN) + gh JSON output, not inline ${{ }}.
+        # REQ-CVA-016.2: reads labels at merge time via PR number anchored to HEAD SHA.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          labels=$(gh pr view "$PR_NUMBER" --json labels --jq '[.labels[].name]')
+          has_minor=$(printf '%s' "$labels" | jq 'index("bump:minor") != null')
+          has_patch=$(printf '%s' "$labels" | jq 'index("bump:patch") != null')
+          if [ "$has_minor" = "true" ] && [ "$has_patch" = "true" ]; then
+            echo "::error::PR #$PR_NUMBER has both bump:minor and bump:patch — CI label-validation should have blocked this. Failing."
+            exit 1
+          elif [ "$has_minor" = "true" ]; then
+            bump_type=minor
+          elif [ "$has_patch" = "true" ]; then
+            bump_type=patch
+          else
+            echo "::error::PR #$PR_NUMBER has neither bump:minor nor bump:patch label. CI label-validation should have blocked this."
+            exit 1
+          fi
+          echo "type=$bump_type" >> "$GITHUB_OUTPUT"
+
+      - name: Compute new version
+        if: steps.pr.outputs.skip != 'true'
+        id: next
+        # REQ-CVA-017: delegates arithmetic to bump-version.sh (no inline YAML arithmetic).
+        env:
+          CURRENT: ${{ steps.current.outputs.version }}
+          BUMP_TYPE: ${{ steps.bump.outputs.type }}
+        run: |
+          new_version=$(./scripts/release/bump-version.sh "$CURRENT" "$BUMP_TYPE")
+          echo "version=$new_version" >> "$GITHUB_OUTPUT"
+
+      - name: Update version.go
+        if: steps.pr.outputs.skip != 'true'
+        # REQ-CVA-018: edit the const in-place with anchored sed pattern.
+        env:
+          OLD: ${{ steps.current.outputs.version }}
+          NEW: ${{ steps.next.outputs.version }}
+        run: |
+          sed -i -E "s|^const Version = \"${OLD}\"$|const Version = \"${NEW}\"|" cmd/builder/version.go
+          # Verify replacement happened — fail loudly before pushing garbage
+          if ! grep -q "^const Version = \"${NEW}\"$" cmd/builder/version.go; then
+            echo "::error::Failed to update Version from ${OLD} to ${NEW} in cmd/builder/version.go"
+            exit 1
+          fi
+
+      - name: Commit and push version bump
+        if: steps.pr.outputs.skip != 'true'
+        # REQ-CVA-018: commit as bot with conventional message.
+        # REQ-CVA-024: [skip-bump] is DECORATIVE ONLY — authoritative guard is the job-level if:.
+        # REQ-CVA-019: push annotated tag (not lightweight).
+        # REQ-CVA-043: bot-authored commit identifiable in git log.
+        env:
+          NEW: ${{ steps.next.outputs.version }}
+        run: |
+          git add cmd/builder/version.go
+          git commit -m "chore(release): ${NEW}" -m "[skip-bump] auto-generated by release workflow"
+          git tag -a "${NEW}" -m "Release ${NEW}"
+          git push origin main
+          git push origin "${NEW}"
+
+      - name: Create GitHub Release
+        if: steps.pr.outputs.skip != 'true'
+        # REQ-CVA-020: PR title passed via env var — NOT inline ${{ }} in run: block.
+        # Double-quoted shell variable expansion prevents metacharacter injection.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW: ${{ steps.next.outputs.version }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          pr_title=$(gh pr view "$PR_NUMBER" --json title --jq '.title')
+          # REQ-CVA-020.3: fallback if PR title is empty
+          notes="${pr_title:-chore(release): ${NEW}}"
+          gh release create "${NEW}" \
+            --title "${NEW}" \
+            --notes "$notes" \
+            --target main

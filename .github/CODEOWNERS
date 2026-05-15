@@ -1,0 +1,4 @@
+# Code Owners for project-builder-cli
+# All workflow files require @Hyperxq's review before merge.
+/.github/workflows/  @Hyperxq
+/.github/CODEOWNERS  @Hyperxq
