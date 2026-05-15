@@ -151,9 +151,16 @@ jobs:
     steps:
       - name: Validate exactly one bump label
         env:
-          LABELS_JSON: ${{ toJson(github.event.pull_request.labels) }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          # Fetch current labels via API at job-execution time (NOT from event payload).
+          # Event payload labels are a snapshot at fire-time and can be empty when the
+          # 'opened' event races with label application (e.g. `gh pr create --label`).
+          # API fetch is authoritative and timing-independent. Anti-injection preserved:
+          # label names never appear inline in run blocks — only flow via jq + env vars.
+          LABELS_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels')
           bump_count=$(printf '%s' "$LABELS_JSON" | jq '[.[] | select(.name == "bump:minor" or .name == "bump:patch")] | length')
           if [ "$bump_count" -eq 0 ]; then
             echo "::error::PR must have exactly one of bump:minor or bump:patch labels. Found: 0. Add the appropriate label per the project's bump policy."

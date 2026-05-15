@@ -10,9 +10,11 @@
 #
 #   2. The job has a permissions block with pull-requests: read
 #
-#   3. Label data is accessed via toJson(github.event.pull_request.labels)
-#      assigned to an env var — NOT inline ${{ }} shell-expansion in run: blocks
-#      (anti-injection per REQ-CVA-014)
+#   3. Label data is accessed via env-var indirection (toJson(...) OR gh pr view
+#      --json labels via env-injected $LABELS_JSON) — NEVER inline
+#      `${{ github.event.pull_request.labels }}` shell-expansion in a run: line
+#      (anti-injection per REQ-CVA-014). Both patterns satisfy the invariant:
+#      label strings never appear directly in a `run:` expression.
 #
 #   4. The validation logic references both bump:minor AND bump:patch literals
 #
@@ -53,10 +55,23 @@ grep -q 'synchronize' "$CI_YML" \
 grep -q 'pull-requests: read' "$CI_YML" \
   || fail "no 'pull-requests: read' permission found in $CI_YML (required for bump-label-validation job)"
 
-# 4. Labels accessed via toJson env var — NOT inline ${{ github.event.pull_request.labels }} in run:
-# The LABELS_JSON env var pattern (toJson) must be present
-grep -q 'toJson(github.event.pull_request.labels)' "$CI_YML" \
-  || fail "labels must be accessed via toJson(github.event.pull_request.labels) env var, not inline interpolation (REQ-CVA-014)"
+# 4. Labels accessed via env-var indirection — NEVER inline interpolation in run:
+# Two valid patterns satisfy REQ-CVA-014:
+#   (a) toJson(github.event.pull_request.labels) assigned to an env var
+#   (b) gh pr view --json labels fetched at job-execution time
+# Both flow label data through env vars / jq, never directly in run: shell.
+# Invariant check: NO line in ci.yml should contain
+# `${{ github.event.pull_request.labels` INSIDE a `run:` context (anti-injection).
+# Proxy: scan for the bad pattern across the file. The valid pattern keeps
+# `${{ }}` only in `env:` or `with:` blocks, never on the same logical line as a shell command.
+if grep -nE 'run:.*\$\{\{[[:space:]]*github\.event\.pull_request\.labels' "$CI_YML" >/dev/null; then
+  fail "labels MUST NOT be inline-interpolated in a run: block (REQ-CVA-014 anti-injection). Pass via env: var or gh pr view --json instead."
+fi
+# Positive check: SOMEWHERE in the validation step, labels are accessed via either
+# toJson(...) env var OR gh pr view --json labels.
+if ! grep -qE 'toJson\(github\.event\.pull_request\.labels\)|gh pr view .* --json labels' "$CI_YML"; then
+  fail "validation step must access labels via either toJson(github.event.pull_request.labels) env var OR gh pr view --json labels (REQ-CVA-014)"
+fi
 
 # 5. Both bump:minor and bump:patch must be referenced in the validation logic
 grep -q 'bump:minor' "$CI_YML" \
