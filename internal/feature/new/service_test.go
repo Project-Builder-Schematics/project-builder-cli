@@ -1,10 +1,9 @@
-// Package newfeature — service_test.go covers the stub service methods.
+// Package newfeature — service_test.go covers service-level contracts.
 //
-// REQ coverage:
-//   - REQ-EC-07: RegisterSchematic + RegisterCollection both return ErrCodeNewNotImplemented.
-//
-// These stubs are replaced with real logic in S-001 (schematic) and S-004 (collection).
-// The test confirms the stub contract so downstream handlers can safely call the service.
+// REQ coverage (S-001 updates these from stub to real behaviour):
+//   - REQ-NS-05: dry-run returns DryRun=true result
+//   - REQ-EC-07: inline mode still returns ErrCodeNewNotImplemented (stub sentinel, S-002)
+//   - REQ-EC-07: collection non-dry-run still returns ErrCodeNewNotImplemented (S-004)
 package newfeature_test
 
 import (
@@ -17,9 +16,9 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 )
 
-// Test_Service_RegisterSchematic_DryRun_ReturnsEmptyResult verifies that the
-// S-000b dry-run path returns a valid result with DryRun=true (REQ-NS-05 partial smoke).
-func Test_Service_RegisterSchematic_DryRun_ReturnsEmptyResult(t *testing.T) {
+// Test_Service_RegisterSchematic_DryRun_ReturnsResult verifies that dry-run mode
+// returns a valid result with DryRun=true (REQ-NS-05).
+func Test_Service_RegisterSchematic_DryRun_ReturnsResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newfeature.NewService(fswriter.NewDryRunWriter())
@@ -37,30 +36,22 @@ func Test_Service_RegisterSchematic_DryRun_ReturnsEmptyResult(t *testing.T) {
 	}
 }
 
-// Test_Service_RegisterSchematic_NonDryRun_ReturnsErrNewNotImplemented verifies
-// that the S-000b stub returns ErrCodeNewNotImplemented for non-dry-run (REQ-EC-07).
-func Test_Service_RegisterSchematic_NonDryRun_ReturnsErrNewNotImplemented(t *testing.T) {
+// Test_Service_RegisterSchematic_Inline_ReturnsErrNotImplemented verifies that
+// --inline still returns ErrCodeNewNotImplemented (S-002 stub, REQ-EC-07).
+func Test_Service_RegisterSchematic_Inline_ReturnsErrNotImplemented(t *testing.T) {
 	t.Parallel()
 
 	svc := newfeature.NewService(fswriter.NewDryRunWriter())
-	req := newfeature.NewSchematicRequest{Name: "my-schematic", DryRun: false}
+	req := newfeature.NewSchematicRequest{Name: "my-schematic", Inline: true}
 
 	_, err := svc.RegisterSchematic(context.Background(), req)
 	if err == nil {
-		t.Fatal("RegisterSchematic(non-dry-run): expected ErrCodeNewNotImplemented, got nil")
+		t.Fatal("RegisterSchematic(inline): expected ErrCodeNewNotImplemented, got nil")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeNewNotImplemented}
 	if !errors.Is(err, sentinel) {
-		t.Errorf("RegisterSchematic: errors.Is(ErrCodeNewNotImplemented) = false; got: %v", err)
-	}
-
-	var e *errs.Error
-	if !errors.As(err, &e) {
-		t.Fatalf("RegisterSchematic: errors.As(*errs.Error) failed; got: %T", err)
-	}
-	if e.Op != "new.handler" {
-		t.Errorf("RegisterSchematic error Op = %q; want %q", e.Op, "new.handler")
+		t.Errorf("RegisterSchematic(inline): errors.Is(ErrCodeNewNotImplemented) = false; got: %v", err)
 	}
 }
 

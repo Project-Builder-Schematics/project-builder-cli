@@ -10,13 +10,10 @@ package newfeature
 
 import "testing"
 
-// languageDetectFn is the package-level language detection function.
-// Tests can override this to prevent TS/JS auto-detection from touching
-// the real filesystem (e.g. scanning for tsconfig.json, package.json).
-// Real implementation lands in S-005 (language.go).
-var languageDetectFn func(dir string) (string, error)
-
 // SetLanguageDetectFn replaces the languageDetectFn for the duration of t.
+// languageDetectFn is declared in language.go (production file) so it is
+// accessible to both production code and tests.
+//
 // Use this in tests that need deterministic language detection without
 // a real workspace on disk (CI runners may have tsconfig.json installed).
 func SetLanguageDetectFn(t testing.TB, fn func(dir string) (string, error)) {

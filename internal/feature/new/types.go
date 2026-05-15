@@ -24,6 +24,10 @@ type NewSchematicRequest struct {
 	// Collection is the target collection name. Defaults to "default" when empty.
 	Collection string
 
+	// WorkDir is the workspace root directory (absolute path).
+	// The service uses this to locate project-builder.json and construct output paths.
+	WorkDir string
+
 	// Force allows overwriting an existing schematic (REQ-NS-03).
 	Force bool
 
@@ -50,6 +54,9 @@ type NewSchematicRequest struct {
 type NewCollectionRequest struct {
 	// Name is the collection name (kebab-case; validated against metachar list).
 	Name string
+
+	// WorkDir is the workspace root directory (absolute path).
+	WorkDir string
 
 	// Force allows overwriting an existing collection (REQ-NC-03).
 	Force bool

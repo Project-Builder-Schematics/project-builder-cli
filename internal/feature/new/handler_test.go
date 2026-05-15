@@ -45,22 +45,18 @@ func newCollectionCmd() *cobra.Command {
 	return cmd
 }
 
-// Test_HandleSchematic_ReturnsErrNewNotImplemented verifies the schematic handler
-// returns ErrCodeNewNotImplemented when called (stub S-000b).
-// REQ-EC-07.
-func Test_HandleSchematic_ReturnsErrNewNotImplemented(t *testing.T) {
+// Test_HandleSchematic_DryRun_ReturnsDryRunResult verifies the schematic handler
+// returns a valid result in dry-run mode (REQ-NS-05).
+// S-001: handler now dispatches to real service; dry-run returns planned ops.
+func Test_HandleSchematic_DryRun_ReturnsDryRunResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService()
 	cmd := newSchematicCmd()
-	err := handleSchematic(svc)(cmd, []string{"my-schematic"}, false, false)
-	if err == nil {
-		t.Fatal("handleSchematic: expected error, got nil")
-	}
-
-	sentinel := &errs.Error{Code: errs.ErrCodeNewNotImplemented}
-	if !errors.Is(err, sentinel) {
-		t.Errorf("handleSchematic: errors.Is(ErrCodeNewNotImplemented) = false; got: %v", err)
+	// Pass dryRun=true so no project-builder.json read is attempted.
+	err := handleSchematic(svc)(cmd, []string{"my-schematic"}, true, false)
+	if err != nil {
+		t.Errorf("handleSchematic(dry-run): unexpected error: %v", err)
 	}
 }
 

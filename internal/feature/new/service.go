@@ -32,17 +32,19 @@ func NewService(fs fswriter.FSWriter) *Service {
 
 // RegisterSchematic is the orchestration entry-point for `builder new schematic`.
 //
-// S-000b: dry-run returns an empty planned-ops result (exit 0) per REQ-NS-05 partial smoke.
-// Non-dry-run returns ErrCodeNewNotImplemented. Real implementation lands in S-001.
-func (s *Service) RegisterSchematic(_ context.Context, req NewSchematicRequest) (*NewResult, error) {
-	if req.DryRun {
-		return &NewResult{
-			DryRun:        true,
-			PlannedOps:    s.fs.PlannedOps(),
-			SchematicName: req.Name,
-		}, nil
+// S-001: dispatches to registerSchematicPath (path mode only).
+// Inline mode (S-002) and full flag wiring (S-005) land in later slices.
+//
+// Preflight order (ADR-026):
+//  1. Name validation (REQ-NS-04)
+//  2. Mode selection (Inline vs Path) — S-001 only supports path mode
+//  3. Existing-state check + force resolution (REQ-NS-02/03) — inside registerSchematicPath
+func (s *Service) RegisterSchematic(ctx context.Context, req NewSchematicRequest) (*NewResult, error) {
+	// S-001: only path mode is implemented. Inline lands in S-002.
+	if req.Inline {
+		return nil, notImplementedErr("new schematic --inline")
 	}
-	return nil, notImplementedErr("new schematic")
+	return s.registerSchematicPath(ctx, req)
 }
 
 // RegisterCollection is the orchestration entry-point for `builder new collection`.
