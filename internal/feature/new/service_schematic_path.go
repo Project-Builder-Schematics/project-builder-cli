@@ -35,7 +35,24 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 		return nil, err
 	}
 
-	// 1b. Validate --extends grammar (REQ-EX-02/03), if provided.
+	// 1b. Interactive TUI prompt for --extends when flag is absent (REQ-EX-04).
+	// If the terminal is interactive and --extends was not passed, call the
+	// promptExtendsFn seam. V1 default: skips (returns skipped=true). Post-v1:
+	// real Bubble Tea list prompt (design §9 R-RES-2).
+	if req.Extends == "" && IsInteractiveTTY() {
+		extendsMu.RLock()
+		fn := promptExtendsFn
+		extendsMu.RUnlock()
+		selected, skipped, promptErr := fn(nil)
+		if promptErr != nil {
+			return nil, promptErr
+		}
+		if !skipped && selected != "" {
+			req.Extends = selected
+		}
+	}
+
+	// 1c. Validate --extends grammar (REQ-EX-02/03), if provided (from flag or prompt).
 	if req.Extends != "" {
 		if err := ValidateExtendsGrammar(req.Extends); err != nil {
 			return nil, err
@@ -82,6 +99,7 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 	result := &NewResult{
 		SchematicName: req.Name,
 		FilesCreated:  []string{factoryPath, schemaPath, dtsPath, pbPath},
+		ExtendsUsed:   req.Extends,
 	}
 
 	// Propagate language warning (REQ-LG-03) through NewResult.Warnings (ADR-019).

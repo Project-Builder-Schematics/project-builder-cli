@@ -29,18 +29,26 @@ func SetLanguageDetectFn(t testing.TB, fn func(dir string) (string, error)) {
 
 // SetTTYCheckFn replaces the ttyCheckFn for the duration of t.
 // ttyCheckFn is declared in extends.go (production file).
+// Access is guarded by extendsMu to prevent data races in parallel tests.
 //
 // Use this in tests that need deterministic TTY detection without depending
 // on the real stdin state (which varies by shell, CI, WSL2 environment).
 func SetTTYCheckFn(t testing.TB, fn func() bool) {
 	t.Helper()
+	extendsMu.Lock()
 	orig := ttyCheckFn
 	ttyCheckFn = fn
-	t.Cleanup(func() { ttyCheckFn = orig })
+	extendsMu.Unlock()
+	t.Cleanup(func() {
+		extendsMu.Lock()
+		ttyCheckFn = orig
+		extendsMu.Unlock()
+	})
 }
 
 // SetPromptExtendsFn replaces the promptExtendsFn for the duration of t.
 // promptExtendsFn is declared in extends.go (production file).
+// Access is guarded by extendsMu to prevent data races in parallel tests.
 //
 // Use this in tests that simulate an interactive TUI extends prompt
 // (REQ-EX-04) without spawning a real Bubble Tea UI.
@@ -48,9 +56,15 @@ func SetTTYCheckFn(t testing.TB, fn func() bool) {
 // fn signature: func(externals []string) (selected string, skipped bool, err error)
 func SetPromptExtendsFn(t testing.TB, fn func(externals []string) (string, bool, error)) {
 	t.Helper()
+	extendsMu.Lock()
 	orig := promptExtendsFn
 	promptExtendsFn = fn
-	t.Cleanup(func() { promptExtendsFn = orig })
+	extendsMu.Unlock()
+	t.Cleanup(func() {
+		extendsMu.Lock()
+		promptExtendsFn = orig
+		extendsMu.Unlock()
+	})
 }
 
 // NewOSWriterForTest returns a real-OS FSWriter for use in tests that require

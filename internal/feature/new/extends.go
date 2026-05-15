@@ -13,6 +13,7 @@ package newfeature
 import (
 	"os"
 	"regexp"
+	"sync"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 )
@@ -69,9 +70,14 @@ func ValidateExtendsGrammar(value string) error {
 	}
 }
 
+// extendsMu guards ttyCheckFn and promptExtendsFn against concurrent test writes.
+// Production code reads these vars; parallel tests write/restore them via Cleanup.
+var extendsMu sync.RWMutex
+
 // ttyCheckFn is the package-level TTY detection function.
 // Tests override this via SetTTYCheckFn (export_test.go) to simulate TTY/non-TTY
 // environments without depending on real stdin state (which varies by shell/CI).
+// Access is guarded by extendsMu.
 var ttyCheckFn func() bool
 
 // promptExtendsFn is the package-level extends prompt function.
@@ -99,8 +105,11 @@ var promptExtendsFn = func(_ []string) (string, bool, error) {
 // Returns false in non-TTY environments: CI pipelines, piped stdin, test processes.
 // Tests inject via SetTTYCheckFn (export_test.go) for deterministic control.
 func IsInteractiveTTY() bool {
-	if ttyCheckFn != nil {
-		return ttyCheckFn()
+	extendsMu.RLock()
+	fn := ttyCheckFn
+	extendsMu.RUnlock()
+	if fn != nil {
+		return fn()
 	}
 	fi, err := os.Stdin.Stat()
 	if err != nil {
