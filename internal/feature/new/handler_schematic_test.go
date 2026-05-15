@@ -862,6 +862,35 @@ func Test_REQ_EX04_Interactive_PromptExtendsCalled(t *testing.T) {
 	}
 }
 
+// Test_ADV13_MaxLengthName_255chars is a characterization test verifying that a
+// 255-character ASCII schematic name (all 'a') does not panic, OOM, or fail
+// unexpectedly. The validator and EscapeIdent must handle long names gracefully.
+// (ADV-13 / S-006)
+func Test_ADV13_MaxLengthName_255chars(t *testing.T) {
+	t.Parallel()
+
+	dir, fs := setupE2EWorkspace(t)
+	svc := newfeature.NewService(fs)
+
+	longName := strings.Repeat("a", 255)
+
+	// Stub TTY check → non-interactive (no prompt seam needed).
+	newfeature.SetTTYCheckFn(t, func() bool { return false })
+
+	result, err := invokeRegisterSchematic(t, svc, newfeature.NewSchematicRequest{
+		Name:     longName,
+		Language: "ts",
+		WorkDir:  dir,
+	})
+	// Characterization assertion: must succeed without panic or OOM.
+	if err != nil {
+		t.Fatalf("ADV-13: 255-char name produced unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("ADV-13: result is nil for 255-char name")
+	}
+}
+
 // Test_REQ_EX04_NonInteractive_PromptNotCalled verifies that when the terminal
 // is NOT interactive, PromptExtends is NOT called (REQ-EX-05 / REQ-EX-04 boundary).
 func Test_REQ_EX04_NonInteractive_PromptNotCalled(t *testing.T) {
