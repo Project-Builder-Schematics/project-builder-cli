@@ -31,13 +31,22 @@ if [ $# -ge 1 ]; then
 fi
 
 # Real mode: scan internal/feature/init/ excluding fswriter.go and _test.go files.
-# The fswriter.go file is the port implementation — it is allowed and expected
-# to call os.* directly.
+# Also scan internal/feature/new/ (wired in S-000b) if it exists.
+# The canonical os.* site is internal/shared/fswriter/fswriter.go — excluded below.
+# internal/shared/fswriter/fswriter.go is the port implementation — it is allowed
+# and expected to call os.* directly.
 mapfile -t files < <(
-  find internal/feature/init -maxdepth 2 -name '*.go' \
-    -not -name 'fswriter.go' \
-    -not -name '*_test.go' \
-    2>/dev/null
+  {
+    find internal/feature/init -maxdepth 2 -name '*.go' \
+      -not -name 'fswriter.go' \
+      -not -name '*_test.go' \
+      2>/dev/null
+    if [ -d internal/feature/new ]; then
+      find internal/feature/new -maxdepth 2 -name '*.go' \
+        -not -name '*_test.go' \
+        2>/dev/null
+    fi
+  } | sort -u
 )
 
 for f in "${files[@]}"; do
