@@ -32,7 +32,7 @@ test-integration:
 
 # Run all fitness functions against the real codebase. Must exit 0.
 # Enforces: fitness-functions-ci.REQ-01.1 through .09 + builder-init-end-to-end FF-init-01..04
-# + cli-versioning-automation FF-14, FF-21, FF-22 (S-0/S-1); FF-16..FF-20, FF-23 added in S-2
+# + cli-versioning-automation FF-14, FF-21, FF-22 (S-0/S-1); FF-16..FF-20, FF-23 (S-2) = 22 total
 fitness:
     @bash scripts/fitness/handler-loc.sh
     @bash scripts/fitness/no-cross-feature.sh
@@ -50,6 +50,17 @@ fitness:
     @bash scripts/fitness/version-const-regex.sh
     @bash scripts/fitness/codeowners-workflows.sh
     @bash scripts/fitness/pr-bump-label-validator.sh
+    @bash scripts/fitness/release-workflow-permissions.sh
+    @bash scripts/fitness/release-workflow-concurrency.sh
+    @bash scripts/fitness/release-workflow-no-pat.sh
+    @bash scripts/fitness/workflows-sha-pinned.sh
+    @bash scripts/fitness/release-anti-loop-guard.sh
+    @bash scripts/fitness/bump-version-script.sh
+
+# Run the bump-version.sh test driver (8+ cases covering arithmetic + edge cases).
+# Enforces: cli-versioning-automation REQ-CVA-040, REQ-CVA-041
+test-bump:
+    @sh scripts/release/bump-version.test.sh
 
 # Run each fitness function against its bad-pattern fixture.
 # Each invocation MUST exit non-zero (the fixture triggers the violation).
