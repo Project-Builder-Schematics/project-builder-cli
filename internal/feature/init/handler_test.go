@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/pathutil"
 )
 
 // newTestHandler constructs a handler RunE-like function with injected fakes.
@@ -319,15 +320,15 @@ func Test_Handler_DirectoryCanonicalisation(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := canonicaliseDir(tt.input)
+			got, err := pathutil.Canonicalise(tt.input)
 			if err != nil {
-				t.Fatalf("canonicaliseDir(%q): unexpected error: %v", tt.input, err)
+				t.Fatalf("pathutil.Canonicalise(%q): unexpected error: %v", tt.input, err)
 			}
 			if tt.wantAbs && !filepath.IsAbs(got) {
-				t.Errorf("canonicaliseDir(%q) = %q: expected absolute path", tt.input, got)
+				t.Errorf("pathutil.Canonicalise(%q) = %q: expected absolute path", tt.input, got)
 			}
 			if got != filepath.Clean(got) {
-				t.Errorf("canonicaliseDir(%q) = %q: not Clean", tt.input, got)
+				t.Errorf("pathutil.Canonicalise(%q) = %q: not Clean", tt.input, got)
 			}
 		})
 	}
@@ -338,14 +339,14 @@ func Test_Handler_DirectoryCanonicalisation(t *testing.T) {
 func Test_Handler_DirectoryTraversal_Rejected(t *testing.T) {
 	t.Parallel()
 
-	_, err := canonicaliseDir("../../../etc")
+	_, err := pathutil.Canonicalise("../../../etc")
 	if err == nil {
-		t.Fatal("canonicaliseDir with .. traversal: expected error, got nil (REQ-DV-02)")
+		t.Fatal("pathutil.Canonicalise with .. traversal: expected error, got nil (REQ-DV-02)")
 	}
 
 	sentinel := &errs.Error{Code: errs.ErrCodeInvalidInput}
 	if !errors.Is(err, sentinel) {
-		t.Errorf("canonicaliseDir traversal error: errors.Is(ErrCodeInvalidInput) = false; got: %v", err)
+		t.Errorf("pathutil.Canonicalise traversal error: errors.Is(ErrCodeInvalidInput) = false; got: %v", err)
 	}
 }
 
