@@ -8,6 +8,8 @@
 //   - REQ-NS-04: name validation → ErrCodeInvalidSchematicName
 //   - REQ-NS-05: --dry-run returns planned ops; zero FS writes
 //   - REQ-NS-06: --language=js → factory.js
+//   - REQ-EX-02/03: --extends grammar validated before FS writes (S-005)
+//   - REQ-LG-01..06: language auto-detect + explicit override (S-005)
 //   - REQ-PJ-01..08: project-builder.json mutation via projectconfig
 //   - REQ-SJ-01/03/05: schema.json canonical bytes via schema.MarshalEmpty
 //   - REQ-TG-01: schema.d.ts written alongside schema.json (S-003 wire-in)
@@ -32,8 +34,21 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 		return nil, err
 	}
 
+	// 1b. Validate --extends grammar (REQ-EX-02/03), if provided.
+	if req.Extends != "" {
+		if err := ValidateExtendsGrammar(req.Extends); err != nil {
+			return nil, err
+		}
+	}
+
 	collection := collectionName(req.Collection)
-	lang := s.effectiveLang(req)
+
+	// 1c. Resolve language — may produce a warning (REQ-LG-03) and may fail
+	// for invalid --language values (REQ-LG-06).
+	lang, langWarn, err := s.resolveEffectiveLang(req)
+	if err != nil {
+		return nil, err
+	}
 
 	// 2. Conflict check (skip in dry-run — dryRunFS Stat always returns ErrNotExist).
 	if !req.DryRun {
@@ -63,10 +78,17 @@ func (s *Service) registerSchematicPath(ctx context.Context, req NewSchematicReq
 		return nil, err
 	}
 
-	return &NewResult{
+	result := &NewResult{
 		SchematicName: req.Name,
 		FilesCreated:  []string{factoryPath, schemaPath, dtsPath, pbPath},
-	}, nil
+	}
+
+	// Propagate language warning (REQ-LG-03) through NewResult.Warnings (ADR-019).
+	if langWarn != "" {
+		result.Warnings = append(result.Warnings, langWarn)
+	}
+
+	return result, nil
 }
 
 // collectionName returns "default" if col is empty.
@@ -77,12 +99,37 @@ func collectionName(col string) string {
 	return col
 }
 
-// effectiveLang resolves the language for this request.
-func (s *Service) effectiveLang(req NewSchematicRequest) string {
-	if req.Language != "" {
-		return req.Language
+// resolveEffectiveLang returns the effective language, any warning, and any error.
+// Uses ResolveLanguage (REQ-LG-01..06) with the test-injection seam as fallback.
+func (s *Service) resolveEffectiveLang(req NewSchematicRequest) (lang, warn string, err error) {
+	// Test injection seam: if languageDetectFn is set, honour it for compatibility
+	// with tests that use SetLanguageDetectFn (export_test.go / L-builder-init-01).
+	if languageDetectFn != nil {
+		detected, detErr := languageDetectFn(req.WorkDir)
+		if detErr == nil && detected != "" {
+			// Explicit flag still wins (REQ-LG-04/05).
+			if req.Language != "" {
+				return req.Language, "", validateExplicitLanguage(req.Language)
+			}
+			return detected, "", nil
+		}
 	}
-	return resolveLanguage(req.WorkDir, s.fs)
+	return ResolveLanguage(req.Language, req.WorkDir, s.fs)
+}
+
+// validateExplicitLanguage returns ErrCodeInvalidLanguage for unsupported values.
+// Used by resolveEffectiveLang when languageDetectFn is active (test seam).
+func validateExplicitLanguage(explicit string) error {
+	switch explicit {
+	case "ts", "js":
+		return nil
+	default:
+		return &errs.Error{
+			Code:    errs.ErrCodeInvalidLanguage,
+			Op:      "new.resolveLanguage",
+			Message: "--language '" + explicit + "': unsupported; valid values: ts, js",
+		}
+	}
 }
 
 // checkSchematicConflict returns ErrCodeNewSchematicExists if the schematic
@@ -222,16 +269,4 @@ func validateSchematicName(name string) error {
 	}
 
 	return nil
-}
-
-// resolveLanguage returns "ts" or "js" based on workspace signals.
-// For S-001: always defaults to "ts" (real auto-detect lands in S-005).
-func resolveLanguage(_ string, _ interface{}) string {
-	if languageDetectFn != nil {
-		lang, err := languageDetectFn("")
-		if err == nil && lang != "" {
-			return lang
-		}
-	}
-	return "ts"
 }
