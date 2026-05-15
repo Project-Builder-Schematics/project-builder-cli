@@ -135,6 +135,10 @@ func checkDefaultType(name string, spec InputSpec) error {
 	return nil
 }
 
+// utf8BOM is the three-byte UTF-8 byte order mark prefix.
+// Some editors (e.g. Windows Notepad) prepend this to UTF-8 files.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
 // StripBOM removes a leading UTF-8 BOM (\xEF\xBB\xBF) from data if present.
 // Returns the stripped bytes and a boolean indicating whether a BOM was found.
 //
@@ -142,11 +146,11 @@ func checkDefaultType(name string, spec InputSpec) error {
 // JSON parsers return an error on the BOM prefix — callers MUST strip before
 // passing to json.Unmarshal.
 //
-// STUB — returns input unchanged; real implementation in the GREEN commit.
-// Tests asserting BOM detection (hadBOM==true) WILL FAIL as expected.
-//
 // Pure function; safe to call on empty or BOM-free input.
 func StripBOM(data []byte) ([]byte, bool) {
+	if len(data) >= 3 && data[0] == utf8BOM[0] && data[1] == utf8BOM[1] && data[2] == utf8BOM[2] {
+		return data[3:], true
+	}
 	return data, false
 }
 

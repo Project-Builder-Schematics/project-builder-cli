@@ -101,6 +101,10 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 		return nil, err
 	}
 
+	// Strip UTF-8 BOM if present (ADV-06: some editors prepend \xEF\xBB\xBF).
+	// Note: WARN surfacing for BOM detection is implemented in Group B (next commit).
+	data, _ = StripBOM(data)
+
 	// First pass: decode into a flat map to capture ALL top-level keys.
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(data, &rawMap); err != nil {

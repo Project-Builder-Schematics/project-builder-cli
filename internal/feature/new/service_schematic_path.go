@@ -17,6 +17,7 @@ package newfeature
 
 import (
 	"context"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -156,12 +157,40 @@ func (s *Service) checkSchematicConflict(req NewSchematicRequest, collection str
 
 // checkSymlinkSafety rejects schematicDir if it exists and is a symlink whose
 // resolved target is outside the workspace root (ADV-08 / REQ-PJ-01).
-//
-// STUB — always returns nil (allows all symlinks).
-// Test_ADV08_SymlinkOutsideWorkspace WILL FAIL as expected.
-// Real implementation lands in the GREEN commit.
-func (s *Service) checkSymlinkSafety(_, _ string) error {
-	return nil
+// This prevents a malicious symlink from redirecting FS writes outside the project.
+// Skip on Windows (symlink semantics are different and require elevated privileges).
+func (s *Service) checkSymlinkSafety(workDir, schematicDir string) error {
+	lfi, err := s.fs.Lstat(schematicDir)
+	if err != nil {
+		return nil // path doesn't exist — no symlink to check
+	}
+	if lfi.Mode()&fs.ModeSymlink == 0 {
+		return nil // regular dir — no safety concern
+	}
+	// Path is a symlink — resolve the target.
+	resolved, err := s.fs.EvalSymlinks(schematicDir)
+	if err != nil {
+		return &errs.Error{
+			Code:    errs.ErrCodeInvalidSchematicName,
+			Op:      "new.registerSchematicPath",
+			Message: "schematic path '" + schematicDir + "' is a broken symlink",
+		}
+	}
+	// Ensure the resolved target is within the workspace.
+	// Clean both paths to normalise separators.
+	cleanResolved := filepath.Clean(resolved)
+	cleanWorkDir := filepath.Clean(workDir)
+	if len(cleanResolved) >= len(cleanWorkDir) && cleanResolved[:len(cleanWorkDir)] == cleanWorkDir {
+		return nil // inside workspace — safe
+	}
+	return &errs.Error{
+		Code:    errs.ErrCodeInvalidSchematicName,
+		Op:      "new.registerSchematicPath",
+		Message: "schematic path '" + schematicDir + "' is a symlink pointing outside the workspace; rejected for safety",
+		Suggestions: []string{
+			"remove the symlink and run again, or choose a different schematic name",
+		},
+	}
 }
 
 // writeSchematicFiles creates the schematic directory and writes factory + schema
