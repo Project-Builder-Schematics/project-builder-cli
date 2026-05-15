@@ -53,6 +53,12 @@ type InputSpec struct {
 
 	// Items specifies the element type (REQUIRED when Type == "list").
 	Items *ItemsSpec `json:"items,omitempty"`
+
+	// UnknownFields captures any JSON fields not listed above (REQ-SJ-09).
+	// Populated by custom UnmarshalJSON when decoding schema.json from disk.
+	// In-memory construction (e.g. tests, code-gen) may set this directly.
+	// The json:"-" tag ensures unknown fields are NOT re-serialised on output.
+	UnknownFields map[string]any `json:"-"`
 }
 
 // ItemsSpec describes the element type for list inputs (REQ-SJ-02).

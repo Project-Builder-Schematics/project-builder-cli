@@ -219,6 +219,93 @@ func Test_ValidateSchema_EmptySchema(t *testing.T) {
 	}
 }
 
+// ─── REQ-SJ-09: unknown fields → warning (not error) ──────────────────────
+
+// Test_ValidateSchema_UnknownFieldsProduceWarning verifies that unknown fields
+// in an InputSpec produce a SchemaValidationWarning (not an error) (REQ-SJ-09).
+//
+// Scenario: input "name" carries unknown field "deprecated" → exactly 1 warning
+// that mentions both the field name ("deprecated") and the input name ("name").
+func Test_ValidateSchema_UnknownFieldsProduceWarning(t *testing.T) {
+	t.Parallel()
+
+	schema := newfeature.Schema{
+		Inputs: map[string]newfeature.InputSpec{
+			"name": {
+				Type: "string",
+				UnknownFields: map[string]any{
+					"deprecated": true,
+				},
+			},
+		},
+	}
+
+	warns, err := newfeature.ValidateSchema(schema)
+	if err != nil {
+		t.Fatalf("ValidateSchema: unexpected error: %v", err)
+	}
+	if len(warns) != 1 {
+		t.Fatalf("ValidateSchema: expected 1 warning for unknown field; got %d", len(warns))
+	}
+	if !containsStr(warns[0].Message, "deprecated") {
+		t.Errorf("warning message does not mention field name 'deprecated': %q", warns[0].Message)
+	}
+	if !containsStr(warns[0].Message, "name") {
+		t.Errorf("warning message does not mention input name 'name': %q", warns[0].Message)
+	}
+}
+
+// Test_ValidateSchema_MultipleInputsUnknownFields verifies that unknown fields
+// from multiple inputs each produce their own warning (REQ-SJ-09 generalisation).
+func Test_ValidateSchema_MultipleInputsUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	schema := newfeature.Schema{
+		Inputs: map[string]newfeature.InputSpec{
+			"alpha": {
+				Type: "string",
+				UnknownFields: map[string]any{
+					"deprecated": true,
+				},
+			},
+			"beta": {
+				Type: "number",
+				UnknownFields: map[string]any{
+					"experimental": "yes",
+				},
+			},
+		},
+	}
+
+	warns, err := newfeature.ValidateSchema(schema)
+	if err != nil {
+		t.Fatalf("ValidateSchema: unexpected error: %v", err)
+	}
+	if len(warns) != 2 {
+		t.Fatalf("ValidateSchema: expected 2 warnings (one per unknown field); got %d", len(warns))
+	}
+}
+
+// Test_ValidateSchema_NoUnknownFields verifies that a schema with no unknown
+// fields produces zero warnings (REQ-SJ-09 negative case).
+func Test_ValidateSchema_NoUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	schema := newfeature.Schema{
+		Inputs: map[string]newfeature.InputSpec{
+			"name": {Type: "string"},
+		},
+	}
+
+	warns, err := newfeature.ValidateSchema(schema)
+	if err != nil {
+		t.Fatalf("ValidateSchema: unexpected error: %v", err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("ValidateSchema: expected 0 warnings; got %d: %v", len(warns), warns)
+	}
+}
+
 // containsStr is a simple string containment helper for schema tests.
 func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && func() bool {
