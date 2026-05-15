@@ -317,6 +317,184 @@ func Test_ReadConfig_ErrCorruptConfig(t *testing.T) {
 	}
 }
 
+// Test_RegisterSchematicInline_WritesCollectionEntry verifies that after calling
+// RegisterSchematicInline, the config has the expected nested entry (REQ-PJ-06).
+//
+// Expected JSON shape:
+//
+//	"collections": { "default": { "schematics": { "<name>": { "inputs": {} } } } }
+func Test_RegisterSchematicInline_WritesCollectionEntry(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, minimalPBJSON, fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	if err := newfeature.RegisterSchematicInline(cfg, "default", "my-inline"); err != nil {
+		t.Fatalf("RegisterSchematicInline: unexpected error: %v", err)
+	}
+
+	if err := newfeature.WriteConfig(dir, cfg, fs); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+
+	path := filepath.Join(dir, "project-builder.json")
+	written, err := fs.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile after WriteConfig: %v", err)
+	}
+
+	// Parse the output to verify the mutation is present.
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(written, &out); err != nil {
+		t.Fatalf("parse written JSON: %v", err)
+	}
+
+	var collections map[string]json.RawMessage
+	if err := json.Unmarshal(out["collections"], &collections); err != nil {
+		t.Fatalf("parse collections: %v", err)
+	}
+
+	defaultColl, ok := collections["default"]
+	if !ok {
+		t.Fatalf("collections.default missing from written JSON")
+	}
+
+	// The inline shape nests under "schematics" key inside the collection.
+	var defaultMap map[string]json.RawMessage
+	if err := json.Unmarshal(defaultColl, &defaultMap); err != nil {
+		t.Fatalf("parse default collection: %v", err)
+	}
+
+	schematicsRaw, ok := defaultMap["schematics"]
+	if !ok {
+		t.Fatalf("collections.default.schematics missing from written JSON (inline mode nests under 'schematics' key)")
+	}
+
+	var schematicsMap map[string]json.RawMessage
+	if err := json.Unmarshal(schematicsRaw, &schematicsMap); err != nil {
+		t.Fatalf("parse schematics map: %v", err)
+	}
+
+	schEntry, ok := schematicsMap["my-inline"]
+	if !ok {
+		t.Fatalf("collections.default.schematics.my-inline missing from written JSON")
+	}
+
+	// The inline entry must be {"inputs": {}}.
+	var entry map[string]json.RawMessage
+	if err := json.Unmarshal(schEntry, &entry); err != nil {
+		t.Fatalf("parse inline entry: %v", err)
+	}
+
+	if _, hasInputs := entry["inputs"]; !hasInputs {
+		t.Errorf("inline entry missing 'inputs' key; got: %s", schEntry)
+	}
+}
+
+// Test_RegisterSchematicInline_Idempotent verifies that registering the same inline
+// schematic twice produces the same result (REQ-PJ-02).
+func Test_RegisterSchematicInline_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, minimalPBJSON, fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	// Register twice.
+	for range 2 {
+		if err := newfeature.RegisterSchematicInline(cfg, "default", "my-inline"); err != nil {
+			t.Fatalf("RegisterSchematicInline: %v", err)
+		}
+	}
+
+	if err := newfeature.WriteConfig(dir, cfg, fs); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+
+	path := filepath.Join(dir, "project-builder.json")
+	written, err := fs.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Count occurrences of "my-inline" in the output — must be exactly 1 key.
+	count := strings.Count(string(written), `"my-inline"`)
+	if count != 1 {
+		t.Errorf("RegisterSchematicInline idempotent: found %d occurrences of my-inline in JSON; want 1;\nwrote: %s", count, written)
+	}
+}
+
+// Test_SchematicExists_InlineMode verifies SchematicExists returns true when the
+// schematic is registered in inline mode (nested under "schematics" key).
+func Test_SchematicExists_InlineMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, minimalPBJSON, fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	// Before registration: must not exist.
+	if newfeature.SchematicExists(cfg, "default", "my-inline") {
+		t.Error("SchematicExists: returned true before inline registration")
+	}
+
+	if err := newfeature.RegisterSchematicInline(cfg, "default", "my-inline"); err != nil {
+		t.Fatalf("RegisterSchematicInline: %v", err)
+	}
+
+	// After registration: must exist (checks both path and inline modes).
+	if !newfeature.SchematicExists(cfg, "default", "my-inline") {
+		t.Error("SchematicExists: returned false after inline registration")
+	}
+}
+
+// Test_SchematicExistsInPathMode verifies SchematicExistsInPathMode returns true
+// only for path-mode entries, not inline entries.
+func Test_SchematicExistsInPathMode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, minimalPBJSON, fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	// Path-mode entry: should be detected as path mode.
+	if err := newfeature.RegisterSchematicPath(cfg, "default", "path-sch", "./schematics/path-sch"); err != nil {
+		t.Fatalf("RegisterSchematicPath: %v", err)
+	}
+	if !newfeature.SchematicExistsInPathMode(cfg, "default", "path-sch") {
+		t.Error("SchematicExistsInPathMode: returned false for path-mode entry")
+	}
+
+	// Inline entry: should NOT be detected as path mode.
+	if err := newfeature.RegisterSchematicInline(cfg, "default", "inline-sch"); err != nil {
+		t.Fatalf("RegisterSchematicInline: %v", err)
+	}
+	if newfeature.SchematicExistsInPathMode(cfg, "default", "inline-sch") {
+		t.Error("SchematicExistsInPathMode: returned true for inline-mode entry (wrong)")
+	}
+}
+
 // Test_SchematicExists_PathMode verifies SchematicExists returns true when the
 // schematic is registered in path mode in the given collection.
 func Test_SchematicExists_PathMode(t *testing.T) {
