@@ -11,6 +11,7 @@
 //   - REQ-SJ-09: unknown fields → warning (not error)
 //   - REQ-SJ-10: default type mismatch → ErrSchemaValidation
 //   - REQ-PJ-07: json.NewEncoder + SetEscapeHTML(false) for all JSON writes
+//   - REQ-NC-01: collection.json skeleton canonical bytes
 package newfeature_test
 
 import (
@@ -316,4 +317,33 @@ func containsStr(s, sub string) bool {
 		}
 		return false
 	}()
+}
+
+// ─── MarshalCollectionSkeleton (REQ-NC-01) ────────────────────────────────────
+
+// Test_MarshalCollectionSkeleton_CanonicalBytes verifies MarshalCollectionSkeleton
+// returns the canonical byte sequence for an empty collection.json (REQ-NC-01).
+//
+// Canonical form: {"version": 1, "schematics": {}} with two-space indent and trailing newline.
+func Test_MarshalCollectionSkeleton_CanonicalBytes(t *testing.T) {
+	t.Parallel()
+
+	want := "{\n  \"version\": 1,\n  \"schematics\": {}\n}\n"
+	got := string(newfeature.MarshalCollectionSkeleton())
+
+	if got != want {
+		t.Errorf("MarshalCollectionSkeleton() bytes mismatch:\nwant: %q\n got: %q", want, got)
+	}
+}
+
+// Test_MarshalCollectionSkeleton_Deterministic verifies calling twice produces the same bytes.
+func Test_MarshalCollectionSkeleton_Deterministic(t *testing.T) {
+	t.Parallel()
+
+	a := newfeature.MarshalCollectionSkeleton()
+	b := newfeature.MarshalCollectionSkeleton()
+
+	if string(a) != string(b) {
+		t.Errorf("MarshalCollectionSkeleton: non-deterministic output:\nfirst:  %q\nsecond: %q", a, b)
+	}
 }

@@ -141,6 +141,37 @@ type emptySchema struct {
 	Inputs map[string]any `json:"inputs"`
 }
 
+// collectionSkeleton is the typed representation of a minimal collection.json.
+// REQ-NC-01: {"version": 1, "schematics": {}}
+type collectionSkeleton struct {
+	Version    int            `json:"version"`
+	Schematics map[string]any `json:"schematics"`
+}
+
+// MarshalCollectionSkeleton returns the canonical byte sequence for an empty collection.json.
+//
+// Canonical form (REQ-NC-01):
+//
+//	{
+//	  "version": 1,
+//	  "schematics": {}
+//	}
+//
+// (Two-space indent, trailing newline, no BOM, no HTML escaping per L-builder-init-03.)
+//
+// Pure function; deterministic; no side effects; no I/O.
+func MarshalCollectionSkeleton() []byte {
+	v := collectionSkeleton{Version: 0, Schematics: map[string]any{}} // wrong version → RED
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		panic("schema.MarshalCollectionSkeleton: unexpected encode error: " + err.Error())
+	}
+	return buf.Bytes()
+}
+
 // MarshalEmpty returns the canonical byte sequence for an empty schema.json.
 //
 // Canonical form (REQ-SJ-05):
