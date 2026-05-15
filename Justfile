@@ -30,8 +30,9 @@ run *args:
 test-integration:
     go test -v -tags=integration -timeout 60s ./internal/shared/engine/angular/...
 
-# Run all 13 fitness functions against the real codebase. Must exit 0.
+# Run all fitness functions against the real codebase. Must exit 0.
 # Enforces: fitness-functions-ci.REQ-01.1 through .09 + builder-init-end-to-end FF-init-01..04
+# + cli-versioning-automation FF-14, FF-21, FF-22 (S-0/S-1); FF-16..FF-20, FF-23 added in S-2
 fitness:
     @bash scripts/fitness/handler-loc.sh
     @bash scripts/fitness/no-cross-feature.sh
@@ -46,6 +47,9 @@ fitness:
     @bash scripts/fitness/init-marker-uniqueness.sh
     @bash scripts/fitness/init-errcode-additive.sh
     @bash scripts/fitness/init-skill-bytes-stable.sh
+    @bash scripts/fitness/version-const-regex.sh
+    @bash scripts/fitness/codeowners-workflows.sh
+    @bash scripts/fitness/pr-bump-label-validator.sh
 
 # Run each fitness function against its bad-pattern fixture.
 # Each invocation MUST exit non-zero (the fixture triggers the violation).

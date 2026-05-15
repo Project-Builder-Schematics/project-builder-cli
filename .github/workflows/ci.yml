@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, reopened, synchronize, labeled, unlabeled]
 
 jobs:
   lint:
@@ -147,3 +148,26 @@ jobs:
 
       - name: fitness-meta (each function catches its bad-pattern fixture)
         run: just fitness-meta
+
+  bump-label-validation:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
+      contents: read
+    steps:
+      - name: Validate exactly one bump label
+        env:
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          set -euo pipefail
+          bump_count=$(printf '%s' "$LABELS_JSON" | jq '[.[] | select(.name == "bump:minor" or .name == "bump:patch")] | length')
+          if [ "$bump_count" -eq 0 ]; then
+            echo "::error::PR must have exactly one of bump:minor or bump:patch labels. Found: 0. Add the appropriate label per the project's bump policy."
+            exit 1
+          fi
+          if [ "$bump_count" -eq 2 ]; then
+            echo "::error::PR cannot have both bump:minor and bump:patch labels. Choose one per the project's bump policy — they are mutually exclusive."
+            exit 1
+          fi
+          echo "Exactly one bump label found. OK."
