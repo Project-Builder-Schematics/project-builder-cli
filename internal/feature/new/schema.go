@@ -101,6 +101,14 @@ func ValidateSchema(s Schema) ([]SchemaValidationWarning, error) {
 				return warns, err
 			}
 		}
+
+		// REQ-SJ-09: unknown fields → warning (not error). Processing continues.
+		for field := range spec.UnknownFields {
+			warns = append(warns, SchemaValidationWarning{
+				Field:   field,
+				Message: fmt.Sprintf("input %q: unknown field %q — unrecognised fields are ignored but may indicate a typo", name, field),
+			})
+		}
 	}
 
 	return warns, nil
