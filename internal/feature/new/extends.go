@@ -30,3 +30,12 @@ func ValidateExtendsGrammar(value string) error {
 	_ = errs.ErrCodeInvalidExtends // ensure import is used
 	return nil
 }
+
+// IsInteractiveTTY reports whether stdin is an interactive terminal.
+// Used to gate the TUI prompt for --extends (REQ-EX-04/05).
+// Returns false in non-TTY environments (CI, piped stdin, tests).
+//
+// S-005 stub: returns false (real os.Stdin TTY check is TODO).
+func IsInteractiveTTY() bool {
+	return false
+}
