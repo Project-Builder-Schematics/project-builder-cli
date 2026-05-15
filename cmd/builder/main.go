@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/validate"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/engine/angular"
+	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render"
 )
@@ -131,11 +133,28 @@ Run 'builder <command> --help' for command-specific usage.`,
 }
 
 // exitCodeForErr maps an error from fang.Execute to a process exit code.
-// Stub: always returns 1 — real implementation in GREEN commit.
-// Returns 0 for nil (defensive; main never calls this for nil).
+//
+// Exit code semantics:
+//   - 0: no error (nil — defensive; main never calls this for nil)
+//   - 2: structured user-facing error (*errs.Error, direct or wrapped via %w)
+//   - 1: unexpected / infrastructure error (anything else)
+//
+// Using exit code 2 for *errs.Error ensures that CI pipelines and AI agents
+// can distinguish user-correctable errors (bad name, existing schematic, mode
+// conflict, invalid extends, invalid language) from unexpected crashes.
+//
+// Trace: handler returns *errs.Error → service propagates → fang.Execute returns
+// it → main calls exitCodeForErr → errors.As finds *errs.Error → returns 2 →
+// os.Exit(2). REQ-NS-02, REQ-NS-04, REQ-NS-07, REQ-NSI-02, REQ-NCP-03,
+// REQ-EX-02, REQ-EX-03, REQ-LG-06, REQ-NC-02, REQ-NC-05, REQ-EC-01..06 all
+// require exit code 2 for structured errors (moves from PARTIAL to COMPLIANT).
 func exitCodeForErr(err error) int {
 	if err == nil {
 		return 0
+	}
+	var ee *errs.Error
+	if errors.As(err, &ee) {
+		return 2
 	}
 	return 1
 }
@@ -161,6 +180,6 @@ func main() {
 	// version output (charmbracelet aesthetics). Tests still drive
 	// app.Root.Execute() directly to keep assertions deterministic.
 	if err := fang.Execute(context.Background(), app.Root); err != nil {
-		os.Exit(1)
+		os.Exit(exitCodeForErr(err))
 	}
 }
