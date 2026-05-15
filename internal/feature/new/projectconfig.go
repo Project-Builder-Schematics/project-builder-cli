@@ -67,6 +67,12 @@ type Config struct {
 	// Inner key: schematic name. Value: json.RawMessage ({"inputs": {}}).
 	Inlines map[string]map[string]json.RawMessage
 
+	// CollectionPaths is the mutable map for top-level collection registrations
+	// (REQ-NC-01). Each entry is a collection name → relative path to collection.json.
+	// Serialised as: "collections": { "<name>": {"path": "<relPath>"} }
+	// These are siblings of "default" at the top level of the collections object.
+	CollectionPaths map[string]string
+
 	// Extra holds all OTHER top-level fields not explicitly decoded above.
 	// They are written back verbatim on WriteConfig (REQ-PJ-04).
 	Extra map[string]json.RawMessage
@@ -75,6 +81,12 @@ type Config struct {
 // schematicPathEntry is the JSON shape for a path-mode schematic registration.
 // REQ-PJ-05: {"path": "./schematics/<name>"}
 type schematicPathEntry struct {
+	Path string `json:"path"`
+}
+
+// collectionEntry is the JSON shape for a top-level collection registration.
+// REQ-NC-01: {"path": "./schematics/<name>/collection.json"}
+type collectionEntry struct {
 	Path string `json:"path"`
 }
 
@@ -101,9 +113,10 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Collections: make(map[string]map[string]json.RawMessage),
-		Inlines:     make(map[string]map[string]json.RawMessage),
-		Extra:       make(map[string]json.RawMessage),
+		Collections:     make(map[string]map[string]json.RawMessage),
+		Inlines:         make(map[string]map[string]json.RawMessage),
+		CollectionPaths: make(map[string]string),
+		Extra:           make(map[string]json.RawMessage),
 	}
 
 	// Extract known fields by key; put everything else in Extra.
@@ -128,6 +141,20 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 					colEntries = make(map[string]json.RawMessage)
 				}
 
+				// Detect collection-level path entry (REQ-NC-01).
+				// A collection entry has {"path": "<string>"} where the path value is
+				// a JSON string (no other keys, or "path" is the only meaningful key).
+				// This distinguishes it from a schematic container ("default") which
+				// has schematic name keys or a "schematics" sub-key.
+				if pathRaw, haspath := colEntries["path"]; haspath && isJSONString(pathRaw) {
+					var colPath string
+					if err := json.Unmarshal(pathRaw, &colPath); err == nil {
+						cfg.CollectionPaths[colName] = colPath
+						// Do NOT also add to Collections — it is a collection, not a schematic container.
+						continue
+					}
+				}
+
 				// Separate inline entries (under "schematics" key) from path entries.
 				pathEntries := make(map[string]json.RawMessage)
 				for entryKey, entryRaw := range colEntries {
@@ -149,6 +176,12 @@ func ReadConfig(dir string, fs fswriter.FSWriter) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// isJSONString returns true iff the raw JSON token is a quoted string.
+// Used to distinguish collection-level path entries from schematic container maps.
+func isJSONString(raw json.RawMessage) bool {
+	return len(raw) >= 2 && raw[0] == '"'
 }
 
 // WriteConfig serialises cfg back to project-builder.json in dir via the FSWriter.
@@ -176,8 +209,8 @@ func WriteConfig(dir string, cfg *Config, fs fswriter.FSWriter) error {
 		out["version"] = cfg.Version
 	}
 
-	// Marshal collections (merging path entries + inline entries per collection).
-	colsEncoded, err := marshalCollections(cfg.Collections, cfg.Inlines)
+	// Marshal collections (merging path entries + inline entries + top-level collection paths).
+	colsEncoded, err := marshalCollections(cfg.Collections, cfg.Inlines, cfg.CollectionPaths)
 	if err != nil {
 		return &errs.Error{
 			Code:    errs.ErrCodeInvalidInput,
@@ -207,17 +240,22 @@ func WriteConfig(dir string, cfg *Config, fs fswriter.FSWriter) error {
 	return fs.WriteFile(path, buf.Bytes(), 0o644)
 }
 
-// marshalCollections merges path-mode entries (cfg.Collections) and inline-mode
-// entries (cfg.Inlines) into a single JSON object for project-builder.json.
+// marshalCollections merges path-mode entries (cfg.Collections), inline-mode
+// entries (cfg.Inlines), and top-level collection paths (cfg.CollectionPaths)
+// into a single JSON object for project-builder.json.
 //
-// For each collection, the output object combines:
+// For each schematic container (e.g. "default"), the output object combines:
 //   - Direct path-mode entries: { "<name>": { "path": "..." }, ... }
 //   - Inline entries nested under "schematics": { "schematics": { "<name>": { "inputs": {} } } }
+//
+// For each top-level collection (e.g. "bar"), the output is a simple path object:
+//   - { "path": "./schematics/bar/collection.json" }
 func marshalCollections(
 	collections map[string]map[string]json.RawMessage,
 	inlines map[string]map[string]json.RawMessage,
+	collectionPaths map[string]string,
 ) (json.RawMessage, error) {
-	// Collect all collection names (union of both maps).
+	// Collect all collection names (union of all maps).
 	allCols := make(map[string]struct{})
 	for colName := range collections {
 		allCols[colName] = struct{}{}
@@ -225,14 +263,30 @@ func marshalCollections(
 	for colName := range inlines {
 		allCols[colName] = struct{}{}
 	}
+	for colName := range collectionPaths {
+		allCols[colName] = struct{}{}
+	}
 
 	if len(allCols) == 0 {
 		return json.RawMessage("{}"), nil
 	}
 
-	// Build the merged collection map.
-	result := make(map[string]map[string]json.RawMessage, len(allCols))
+	// Use a raw map to allow heterogeneous value types (schematic containers vs collection paths).
+	resultRaw := make(map[string]json.RawMessage, len(allCols))
+
 	for colName := range allCols {
+		// Top-level collection path entries (REQ-NC-01) — serialised as {"path": "..."}.
+		if relPath, isColPath := collectionPaths[colName]; isColPath {
+			entry := collectionEntry{Path: relPath}
+			b, err := json.Marshal(entry)
+			if err != nil {
+				return nil, err
+			}
+			resultRaw[colName] = b
+			continue
+		}
+
+		// Schematic container (e.g. "default") — build merged map.
 		colObj := make(map[string]json.RawMessage)
 
 		// Add path-mode entries directly.
@@ -249,10 +303,14 @@ func marshalCollections(
 			colObj["schematics"] = json.RawMessage(inlineBytes)
 		}
 
-		result[colName] = colObj
+		colObjBytes, err := json.Marshal(colObj)
+		if err != nil {
+			return nil, err
+		}
+		resultRaw[colName] = colObjBytes
 	}
 
-	b, err := json.Marshal(result)
+	b, err := json.Marshal(resultRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -356,4 +414,30 @@ func CountInlineSchematics(cfg *Config, collection string) int {
 		return len(inl)
 	}
 	return 0
+}
+
+// RegisterCollection mutates cfg to add (or overwrite) a top-level collection
+// entry in the collections map (REQ-NC-01).
+//
+// Collection entry shape: {"path": relPath}
+// The collection is stored in cfg.CollectionPaths[name] = relPath, which is
+// serialised by WriteConfig/marshalCollections as a sibling of "default" at the
+// top level of the "collections" JSON object.
+//
+// Idempotent: calling with the same (name, relPath) is a no-op (REQ-PJ-02).
+func RegisterCollection(cfg *Config, name, relPath string) error {
+	if cfg.CollectionPaths == nil {
+		cfg.CollectionPaths = make(map[string]string)
+	}
+	cfg.CollectionPaths[name] = relPath
+	return nil
+}
+
+// CollectionExists returns true iff a top-level collection entry exists for name.
+func CollectionExists(cfg *Config, name string) bool {
+	if cfg.CollectionPaths == nil {
+		return false
+	}
+	_, ok := cfg.CollectionPaths[name]
+	return ok
 }

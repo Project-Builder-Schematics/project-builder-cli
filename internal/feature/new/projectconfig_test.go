@@ -495,6 +495,119 @@ func Test_SchematicExistsInPathMode(t *testing.T) {
 	}
 }
 
+// ─── RegisterCollection (REQ-NC-01) ──────────────────────────────────────────
+
+// Test_RegisterCollection_WritesTopLevelCollectionEntry verifies that after calling
+// RegisterCollection, the config serialises the collection as a top-level peer
+// of "default" with shape: collections.<name> = {"path": "<relPath>"} (REQ-NC-01).
+func Test_RegisterCollection_WritesTopLevelCollectionEntry(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, minimalPBJSON, fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	if err := newfeature.RegisterCollection(cfg, "bar", "./schematics/bar/collection.json"); err != nil {
+		t.Fatalf("RegisterCollection: unexpected error: %v", err)
+	}
+
+	if err := newfeature.WriteConfig(dir, cfg, fs); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
+	}
+
+	path := filepath.Join(dir, "project-builder.json")
+	written, err := fs.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile after WriteConfig: %v", err)
+	}
+
+	// Parse to verify the collection entry exists at the top level of "collections".
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(written, &out); err != nil {
+		t.Fatalf("parse written JSON: %v", err)
+	}
+
+	var collections map[string]json.RawMessage
+	if err := json.Unmarshal(out["collections"], &collections); err != nil {
+		t.Fatalf("parse collections: %v", err)
+	}
+
+	barRaw, ok := collections["bar"]
+	if !ok {
+		t.Fatalf("collections.bar missing from written JSON (REQ-NC-01 violation); written: %s", written)
+	}
+
+	var barEntry map[string]string
+	if err := json.Unmarshal(barRaw, &barEntry); err != nil {
+		t.Fatalf("parse bar entry: %v", err)
+	}
+
+	if got := barEntry["path"]; got != "./schematics/bar/collection.json" {
+		t.Errorf("RegisterCollection: path = %q; want %q", got, "./schematics/bar/collection.json")
+	}
+}
+
+// Test_CollectionExists_TrueAfterRegister verifies CollectionExists returns true
+// after RegisterCollection is called and false before.
+func Test_CollectionExists_TrueAfterRegister(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, minimalPBJSON, fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	// Before registration: must not exist.
+	if newfeature.CollectionExists(cfg, "bar") {
+		t.Error("CollectionExists: returned true before registration")
+	}
+
+	if err := newfeature.RegisterCollection(cfg, "bar", "./schematics/bar/collection.json"); err != nil {
+		t.Fatalf("RegisterCollection: %v", err)
+	}
+
+	// After registration: must exist.
+	if !newfeature.CollectionExists(cfg, "bar") {
+		t.Error("CollectionExists: returned false after registration")
+	}
+}
+
+// Test_RegisterCollection_RoundTrip verifies that reading back a project-builder.json
+// that has a collection entry populates CollectionExists correctly.
+func Test_RegisterCollection_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	const pbWithCollection = `{
+  "version": "1",
+  "collections": {
+    "bar": {"path": "./schematics/bar/collection.json"}
+  }
+}
+`
+	dir := t.TempDir()
+	fs := fswriter.NewFakeFS()
+	withPBJSON(t, dir, pbWithCollection, fs)
+
+	cfg, err := newfeature.ReadConfig(dir, fs)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+
+	// After reading back, "bar" should be recognised as a collection (not a schematic container).
+	if !newfeature.CollectionExists(cfg, "bar") {
+		t.Error("CollectionExists: returned false after round-trip read (REQ-NC-01 round-trip)")
+	}
+}
+
 // Test_SchematicExists_PathMode verifies SchematicExists returns true when the
 // schematic is registered in path mode in the given collection.
 func Test_SchematicExists_PathMode(t *testing.T) {
