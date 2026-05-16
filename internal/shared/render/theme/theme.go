@@ -12,6 +12,7 @@ import (
 	"io"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // Theme is the aggregate value passed to renderers. It carries a resolved color
@@ -71,4 +72,24 @@ func (t Theme) Profile() Profile {
 // Appearance returns the active terminal appearance (light or dark).
 func (t Theme) Appearance() Appearance {
 	return t.appearance
+}
+
+// MapToTermenv converts a theme.Profile to the corresponding termenv.Profile
+// so callers can wire lipgloss.SetColorProfile without importing termenv directly.
+//
+// Used by composeApp to close the dead-data gap: after calling
+// lipgloss.SetColorProfile(MapToTermenv(theme.Profile())), lipgloss quantizes
+// colors at the correct tier for the active terminal (output-port/REQ-05.1).
+func MapToTermenv(p Profile) termenv.Profile {
+	switch p {
+	case TrueColor:
+		return termenv.TrueColor
+	case ANSI256:
+		return termenv.ANSI256
+	case ANSI16:
+		return termenv.ANSI
+	default:
+		// NoColor and any future unknown profile → ASCII (no SGR output).
+		return termenv.Ascii
+	}
 }

@@ -1,7 +1,9 @@
-// Package newfeature — render_test.go covers the stub render helpers.
+// Package newfeature — render_test.go covers the render helpers.
 //
-// REQ coverage: ADR-019 (all output via Renderer — no direct fmt.Println).
-// These tests verify the render helpers produce non-empty output and valid JSON.
+// ADR-04: RenderPretty tests use outputtest.Spy to assert (method, args) —
+// NOT bytes. RenderJSON tests retain io.Writer since JSON is structured data.
+//
+// REQ coverage: ADR-019 (all output via Output port — no direct fmt.Println).
 package newfeature_test
 
 import (
@@ -12,30 +14,87 @@ import (
 
 	newfeature "github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/new"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output/outputtest"
 )
 
-// Test_RenderPretty_DryRun_NonEmpty verifies that pretty-rendering a dry-run
-// NewResult produces a non-empty string containing the dry-run indicator.
-func Test_RenderPretty_DryRun_NonEmpty(t *testing.T) {
+// Test_RenderPretty_DryRun_EmitsHeadingAndNewline verifies that RenderPretty
+// in dry-run mode calls Heading("DRY RUN — no files written") and Newline.
+func Test_RenderPretty_DryRun_EmitsHeadingAndNewline(t *testing.T) {
 	t.Parallel()
 
+	spy := outputtest.New()
+	result := newfeature.NewResult{
+		DryRun: true,
+	}
+	newfeature.RenderPretty(spy, result)
+
+	spy.AssertCalledWith(t, "Heading", "DRY RUN — no files written")
+	spy.AssertCalled(t, "Newline")
+}
+
+// Test_RenderPretty_DryRun_CreateOp_EmitsBody verifies that a create_file
+// planned op is emitted as Body with the path string.
+func Test_RenderPretty_DryRun_CreateOp_EmitsBody(t *testing.T) {
+	t.Parallel()
+
+	spy := outputtest.New()
 	result := newfeature.NewResult{
 		DryRun: true,
 		PlannedOps: []fswriter.PlannedOp{
 			{Op: "create_file", Path: "/tmp/foo/factory.ts"},
 		},
 	}
+	newfeature.RenderPretty(spy, result)
 
-	var buf bytes.Buffer
-	newfeature.RenderPretty(&buf, result)
+	spy.AssertCalledWith(t, "Body", "  Would create: /tmp/foo/factory.ts")
+}
 
-	got := buf.String()
-	if got == "" {
-		t.Error("RenderPretty produced empty output for dry-run result")
+// Test_RenderPretty_DryRun_DefaultOp_EmitsBody verifies that non-create_file
+// planned ops are emitted as Body with the op + path.
+func Test_RenderPretty_DryRun_DefaultOp_EmitsBody(t *testing.T) {
+	t.Parallel()
+
+	spy := outputtest.New()
+	result := newfeature.NewResult{
+		DryRun: true,
+		PlannedOps: []fswriter.PlannedOp{
+			{Op: "modify_config", Path: "/tmp/foo/project-builder.json"},
+		},
 	}
-	if !strings.Contains(got, "DRY RUN") {
-		t.Errorf("RenderPretty dry-run output missing 'DRY RUN' marker; got: %q", got)
+	newfeature.RenderPretty(spy, result)
+
+	spy.AssertCalledWith(t, "Body", "  Would modify_config: /tmp/foo/project-builder.json")
+}
+
+// Test_RenderPretty_RealWrite_EmitsPaths verifies that real-write mode emits
+// Path calls for each file in FilesCreated.
+func Test_RenderPretty_RealWrite_EmitsPaths(t *testing.T) {
+	t.Parallel()
+
+	spy := outputtest.New()
+	result := newfeature.NewResult{
+		DryRun:       false,
+		FilesCreated: []string{"/tmp/foo/factory.ts", "/tmp/foo/schema.json"},
 	}
+	newfeature.RenderPretty(spy, result)
+
+	spy.AssertCalledWith(t, "Path", "/tmp/foo/factory.ts")
+	spy.AssertCalledWith(t, "Path", "/tmp/foo/schema.json")
+}
+
+// Test_RenderPretty_Warnings_EmitsWarning verifies that warnings are emitted
+// as Warning calls regardless of dry-run mode (ADR-019).
+func Test_RenderPretty_Warnings_EmitsWarning(t *testing.T) {
+	t.Parallel()
+
+	spy := outputtest.New()
+	result := newfeature.NewResult{
+		DryRun:   false,
+		Warnings: []string{"collection 'default' now has 10 inline schematics"},
+	}
+	newfeature.RenderPretty(spy, result)
+
+	spy.AssertCalledWith(t, "Warning", "collection 'default' now has 10 inline schematics")
 }
 
 // Test_RenderJSON_ProducesValidJSON verifies that JSON-rendering a NewResult

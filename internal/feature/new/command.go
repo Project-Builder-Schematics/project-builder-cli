@@ -6,17 +6,23 @@
 //
 // All flags match spec literals exactly (L-builder-init-01 cross-check).
 // The parent command has no RunE — it delegates entirely to subcommands.
+//
+// S-004: NewCommand now accepts output.Output for injection (ADR-03).
+// The caller (composeApp) constructs the Output adapter and passes it here.
 package newfeature
 
 import (
 	"github.com/spf13/cobra"
+
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output"
 )
 
 // NewCommand returns the Cobra parent command for `builder new` with the
 // schematic and collection leaf subcommands registered.
 //
 // svc is the wired Service instance provided by composeApp.
-func NewCommand(svc *Service) *cobra.Command {
+// out is the unified output port (ADR-03) — all user-facing emission goes through it.
+func NewCommand(svc *Service, out output.Output) *cobra.Command {
 	parent := &cobra.Command{
 		Use:   "new",
 		Short: "Scaffold a new schematic or collection",
@@ -29,15 +35,15 @@ Subcommands:
 		SilenceUsage:  true,
 	}
 
-	parent.AddCommand(newSchematicCommand(svc))
-	parent.AddCommand(newCollectionCommand(svc))
+	parent.AddCommand(newSchematicCommand(svc, out))
+	parent.AddCommand(newCollectionCommand(svc, out))
 
 	return parent
 }
 
 // newSchematicCommand returns the Cobra leaf command for `builder new schematic`.
 // Alias "s" is registered per REQ-AL-01.
-func newSchematicCommand(svc *Service) *cobra.Command {
+func newSchematicCommand(svc *Service, out output.Output) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "schematic [name]",
 		Aliases: []string{"s"},
@@ -69,7 +75,7 @@ of creating standalone files.`,
 
 	// RunE adapter: extracts dryRun + jsonOut from persistent parent flags,
 	// then delegates to handleSchematic.
-	handler := handleSchematic(svc)
+	handler := handleSchematic(svc, out)
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		dryRun, _ := c.Flags().GetBool("dry-run")
 		jsonOut := false // --output flag lives on root; injected via PersistentPreRunE in S-006
@@ -81,7 +87,7 @@ of creating standalone files.`,
 
 // newCollectionCommand returns the Cobra leaf command for `builder new collection`.
 // Alias "c" is registered per REQ-AL-02.
-func newCollectionCommand(svc *Service) *cobra.Command {
+func newCollectionCommand(svc *Service, out output.Output) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "collection [name]",
 		Aliases: []string{"c"},
@@ -110,7 +116,7 @@ Use --dry-run to preview the planned operations without writing any files.`,
 	flags.Bool("inline", false, "embed collection definition inline (conflicts with --publishable)")
 
 	// RunE adapter: extracts dryRun + jsonOut from flags, delegates to handleCollection.
-	handler := handleCollection(svc)
+	handler := handleCollection(svc, out)
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		dryRun, _ := c.Flags().GetBool("dry-run")
 		jsonOut := false

@@ -10,15 +10,18 @@
 //
 // REQ-MCP-01 prompt affirmatives: y, Y, yes, YES (trim trailing newline).
 // Anything else (including empty Enter) → MCPNo.
+//
+// ADR-05: promptMCP delegates write+read to output.Output.Prompt, which is
+// synchronous. The answer-parsing logic is extracted to parseMCPAnswer for
+// independent testability.
 package initialise
 
 import (
-	"bufio"
-	"io"
 	"os"
 	"strings"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output"
 )
 
 // parseMCPFlag parses a raw --mcp flag value (case-insensitive) to MCPMode.
@@ -107,23 +110,26 @@ func isStdinTTY() bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-// promptMCP writes mcpPromptQuestion to w and reads one line from r.
+// promptMCP writes mcpPromptQuestion via out.Prompt and reads the answer.
 // Returns MCPYes if the answer is affirmative (y, Y, yes, YES after trim).
 // Returns MCPNo for anything else, including empty Enter (capital-N default).
 // REQ-MCP-01.
 //
-// The handler calls this with os.Stdin and os.Stdout. Tests inject fake
-// io.Reader and io.Writer via the handler's stdin/stdout coupling.
-func promptMCP(r io.Reader, w io.Writer) MCPMode {
-	_, _ = io.WriteString(w, mcpPromptQuestion)
+// ADR-05: output.Output.Prompt handles write+read synchronously. In tests,
+// inject a fake Output whose Prompt returns the desired answer.
+func promptMCP(out output.Output) MCPMode {
+	answer, _ := out.Prompt(mcpPromptQuestion)
+	return parseMCPAnswer(answer)
+}
 
-	scanner := bufio.NewScanner(r)
-	if scanner.Scan() {
-		answer := strings.TrimRight(scanner.Text(), "\r\n")
-		switch answer {
-		case "y", "Y", "yes", "YES":
-			return MCPYes
-		}
+// parseMCPAnswer maps a raw answer string to MCPYes or MCPNo.
+// Affirmatives: y, Y, yes, YES (trimmed). Anything else → MCPNo.
+// Extracted for independent testability (REQ-MCP-01 answer-parsing).
+func parseMCPAnswer(answer string) MCPMode {
+	trimmed := strings.TrimRight(answer, "\r\n")
+	switch trimmed {
+	case "y", "Y", "yes", "YES":
+		return MCPYes
 	}
 	return MCPNo
 }

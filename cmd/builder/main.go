@@ -16,6 +16,8 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/add"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/execute"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/feature/info"
@@ -31,6 +33,7 @@ import (
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output/themed"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
 
@@ -64,6 +67,12 @@ type App struct {
 	// Renderer is the event-stream output port. Wired via render.NewRenderer factory (/plan #3).
 	Renderer render.Renderer
 
+	// Output is the unified user-facing emission port. Wired to themed.Adapter
+	// in composeApp (output-port/REQ-05.1). Feature handlers receive Output via
+	// constructor injection (S-001+); direct os.Stdout writes are prohibited in
+	// internal/feature/* (FF-25).
+	Output *themed.Adapter
+
 	// Root is the Cobra root command with all feature sub-commands registered.
 	Root *cobra.Command
 
@@ -94,6 +103,15 @@ func composeApp(cfg Config) (*App, error) {
 	if thErr != nil {
 		return nil, thErr
 	}
+
+	// Wire lipgloss global color profile from the resolved theme profile (output-port/REQ-05.1).
+	// Called exactly once here — the sole site in the codebase — so lipgloss quantizes
+	// colors at the correct tier for the active terminal (dead-data gap closure).
+	lipgloss.SetColorProfile(theme.MapToTermenv(th.Profile()))
+
+	// Construct the Output adapter. Feature handlers receive this via constructor
+	// injection (S-001+); wired into init and new in S-001/S-003.
+	out := themed.New(os.Stdout, th)
 
 	// Renderer adapter — selected by factory based on --output flag + TTY.
 	// isTTY is injected here (production path); tests pass their own stub.
@@ -142,19 +160,20 @@ Run 'builder <command> --help' for command-specific usage.`,
 	newSvc := newfeature.NewService(newFS)
 
 	// Register all commands (cobra-command-tree.REQ-01.1).
-	root.AddCommand(initialise.NewCommand(initSvc)) // init
-	root.AddCommand(execute.NewCommand())           // execute
-	root.AddCommand(add.NewCommand())               // add
-	root.AddCommand(info.NewCommand())              // info
-	root.AddCommand(sync.NewCommand())              // sync
-	root.AddCommand(validate.NewCommand())          // validate
-	root.AddCommand(remove.NewCommand())            // remove
-	root.AddCommand(skill.NewCommand())             // skill (parent; skill update is its leaf)
-	root.AddCommand(newfeature.NewCommand(newSvc))  // new (parent; schematic + collection leaves)
+	root.AddCommand(initialise.NewCommand(initSvc, out)) // init (S-003: out injected)
+	root.AddCommand(execute.NewCommand())                // execute
+	root.AddCommand(add.NewCommand())                    // add
+	root.AddCommand(info.NewCommand())                   // info
+	root.AddCommand(sync.NewCommand())                   // sync
+	root.AddCommand(validate.NewCommand())               // validate
+	root.AddCommand(remove.NewCommand())                 // remove
+	root.AddCommand(skill.NewCommand())                  // skill (parent; skill update is its leaf)
+	root.AddCommand(newfeature.NewCommand(newSvc, out))  // new (S-004: out injected)
 
 	return &App{
 		Engine:   eng,
 		Renderer: ren,
+		Output:   out,
 		Root:     root,
 		Theme:    th,
 	}, nil

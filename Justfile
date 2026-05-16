@@ -33,7 +33,7 @@ test-integration:
 # Run all fitness functions against the real codebase. Must exit 0.
 # Enforces: fitness-functions-ci.REQ-01.1 through .09 + builder-init-end-to-end FF-init-01..04
 # + cli-versioning-automation FF-14, FF-21, FF-22 (S-0/S-1); FF-16..FF-20, FF-23 (S-2)
-# + color-palette-theming FF-24 = 23 total
+# + color-palette-theming FF-24; unified-output-port FF-25 = 25 total
 fitness:
     @bash scripts/fitness/handler-loc.sh
     @bash scripts/fitness/no-cross-feature.sh
@@ -58,11 +58,17 @@ fitness:
     @bash scripts/fitness/release-anti-loop-guard.sh
     @bash scripts/fitness/bump-version-script.sh
     @bash scripts/fitness/no-hex-leak.sh
+    @bash scripts/fitness/no-direct-stdout-in-features.sh
 
 # FF-24: Check for raw hex color literals outside internal/shared/render/theme/.
 # Enforces theme-tokens/REQ-03.1, render-pretty/REQ-05.1, REQ-05.2.
 fitness-hex-leak:
     @bash scripts/fitness/no-hex-leak.sh
+
+# FF-25: Check for direct stdout writes in internal/feature/* production code.
+# Enforces output-discipline/REQ-01.1, REQ-02.1, REQ-03.1.
+fitness-stdout-leak:
+    @bash scripts/fitness/no-direct-stdout-in-features.sh
 
 # Run the bump-version.sh test driver (8+ cases covering arithmetic + edge cases).
 # Enforces: cli-versioning-automation REQ-CVA-040, REQ-CVA-041
