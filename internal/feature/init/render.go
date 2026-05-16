@@ -1,64 +1,73 @@
 // Package initialise — render.go contains the result-rendering helper used by
-// handler.RunE. Pretty mode emits human-readable text; JSON mode emits NDJSON.
+// handler.RunE. Pretty mode emits via output.Output; JSON mode encodes to a
+// dedicated io.Writer (bypassing Output — JSON is structured data, not chrome).
 //
 // REQ-JO-01: --json selects the JSON renderer.
 // REQ-DR-03: dry-run pretty output begins with "DRY RUN — no files written".
 // REQ-MCP-02: MCP instructions are printed after install when MCP=yes (real mode).
+// output-discipline/REQ-03.1: no direct fmt.Print* in internal/feature/* (FF-25).
 package initialise
 
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 
-	"github.com/spf13/cobra"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output"
 )
 
-// renderResult writes the InitResult to the command's output in the requested format.
-// JSON mode emits a single NDJSON line; pretty mode emits human-readable text.
+// renderResult writes the InitResult to the appropriate sink.
 //
-// fmt.Fprintf/Fprintln errors are intentionally discarded — pretty output goes to
-// the renderer (stdout by default) and a failing write would surface elsewhere; we
-// don't want a write error to mask the real Service.Init outcome.
-func renderResult(cmd *cobra.Command, result InitResult, jsonOut bool) error {
-	out := cmd.OutOrStdout()
+// JSON mode (jsonOut=true): encodes result as NDJSON to jsonWriter; does NOT
+// invoke any Output methods. JSON is structured data, not user-facing chrome.
+//
+// Pretty mode (jsonOut=false): emits styled output via out.
+// Dry-run → Heading + Newline + Body lines per planned op.
+// Real-write → Heading(directory) + Path per created file + optional Success/Hint/Body.
+//
+// fmt.Fprintf/Fprintln errors are intentionally discarded in JSON mode —
+// a failing write would surface elsewhere and we don't want it to mask the
+// real Service.Init outcome.
+func renderResult(out output.Output, jsonWriter io.Writer, result InitResult, jsonOut bool) error {
 	if jsonOut {
-		enc := json.NewEncoder(out)
+		enc := json.NewEncoder(jsonWriter)
 		enc.SetEscapeHTML(false)
 		return enc.Encode(result)
 	}
 
 	if result.DryRun {
-		_, _ = fmt.Fprintln(out, "DRY RUN — no files written")
-		_, _ = fmt.Fprintln(out)
+		out.Heading("DRY RUN — no files written")
+		out.Newline()
 		for _, op := range result.PlannedOps {
 			switch op.Op {
 			case "create_file":
-				_, _ = fmt.Fprintf(out, "  Would create: %s\n", op.Path)
+				out.Body(fmt.Sprintf("  Would create: %s", op.Path))
 			case "append_marker":
-				_, _ = fmt.Fprintf(out, "  Would append: %s\n", op.Path)
+				out.Body(fmt.Sprintf("  Would append: %s", op.Path))
 			case "modify_devdep":
-				_, _ = fmt.Fprintf(out, "  Would modify: %s (%s)\n", op.Path, op.Details)
+				out.Body(fmt.Sprintf("  Would modify: %s (%s)", op.Path, op.Details))
 			case "install_package":
-				_, _ = fmt.Fprintf(out, "  Would install: %s\n", op.Details)
+				out.Body(fmt.Sprintf("  Would install: %s", op.Details))
 			case "mcp_setup_offered":
-				_, _ = fmt.Fprintln(out, "  Would offer:   MCP server setup instructions")
+				out.Body("  Would offer:   MCP server setup instructions")
 			}
 		}
 		return nil
 	}
 
-	// Real-write mode — list created files.
-	_, _ = fmt.Fprintf(out, "Initialising Project Builder workspace in %s ...\n\n", result.Directory)
+	// Real-write mode — announce directory, list created files, then results.
+	out.Heading(fmt.Sprintf("Initialising Project Builder workspace in %s ...", result.Directory))
 	for _, p := range result.OutputsCreated {
-		_, _ = fmt.Fprintf(out, "  Created: %s\n", p)
+		out.Path(p)
 	}
 	if result.Installed {
-		_, _ = fmt.Fprintf(out, "\nInstalling @pbuilder/sdk via %s ... done.\n", result.PackageManager)
+		out.Success(fmt.Sprintf("Installing @pbuilder/sdk via %s ... done.", result.PackageManager))
 	}
-	_, _ = fmt.Fprintln(out, "\nProject Builder is ready. Try: builder add <name>")
+	out.Success("Project Builder is ready.")
+	out.Hint("Try: builder add <name>")
 	if result.MCPSetupOffered {
-		_, _ = fmt.Fprintln(out)
-		_, _ = fmt.Fprintln(out, mcpInstructions)
+		out.Newline()
+		out.Body(mcpInstructions)
 	}
 	return nil
 }

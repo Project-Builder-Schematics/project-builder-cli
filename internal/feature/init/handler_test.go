@@ -14,10 +14,13 @@
 //   - REQ-MCP-01 (--mcp flag: yes/no/prompt accepted; invalid rejected)
 //   - REQ-MCP-01 (--mcp=prompt + --non-interactive → ErrCodeInvalidInput)
 //   - REQ-MCP-01 (--non-interactive + no --mcp flag → defaults to MCPNo)
-//   - REQ-MCP-01 (prompt loop: affirmative → MCPYes; negative/empty → MCPNo)
+//   - REQ-MCP-01 (prompt answer-parsing: affirmative → MCPYes; negative/empty → MCPNo)
 //   - REQ-MCP-02 (dry-run skips prompt; real-mode with MCPPrompt does prompt)
 //   - REQ-MCP-03 (--json output includes mcp_setup_offered bool)
 //   - REQ-EC-03 (--publishable → ErrCodeInitNotImplemented via handler path)
+//
+// S-003: promptMCP tests migrated to parseMCPAnswer (ADR-05: Prompt handled
+// by output.Output; answer-parsing stays in parseMCPAnswer for testability).
 package initialise
 
 import (
@@ -26,14 +29,35 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/pathutil"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output/outputtest"
 )
 
-// newTestHandler constructs a handler RunE-like function with injected fakes.
+// fakePromptOutput wraps outputtest.Spy but overrides Prompt to return a
+// configurable answer. Used to test promptMCP with specific user answers.
+type fakePromptOutput struct {
+	*outputtest.Spy
+	promptAnswer string
+}
+
+func newFakePromptOutput(answer string) *fakePromptOutput {
+	return &fakePromptOutput{Spy: outputtest.New(), promptAnswer: answer}
+}
+
+// Prompt overrides Spy.Prompt to return the configured answer.
+func (f *fakePromptOutput) Prompt(text string) (string, error) {
+	_, _ = f.Spy.Prompt(text) // record the call in the Spy; discard dummy return
+	return f.promptAnswer, nil
+}
+
+// compile-time assertion: fakePromptOutput satisfies output.Output.
+var _ output.Output = (*fakePromptOutput)(nil)
+
+// newHandlerFunc constructs a handler RunE-like function with injected fakes.
 // This tests the handler logic (flag parsing + validation + service call)
 // without going through Cobra, for precise error assertions.
 func newHandlerFunc(dryRunMode bool, mcp MCPMode, publishable bool, dir string) func() (InitResult, error) {
@@ -402,11 +426,14 @@ func Test_Handler_EndToEnd_DryRun_JSON(t *testing.T) {
 	}
 }
 
-// --- REQ-MCP-01: MCP prompt loop tests ---
+// --- REQ-MCP-01: MCP answer-parsing tests ---
+//
+// After S-003 migration (ADR-05), promptMCP uses output.Output.Prompt for I/O.
+// The answer-parsing logic is extracted to parseMCPAnswer, tested independently.
 
-// Test_PromptMCP_AffirmativeResponses verifies that y, Y, yes, YES all
+// Test_ParseMCPAnswer_AffirmativeResponses verifies that y, Y, yes, YES all
 // resolve to MCPYes. REQ-MCP-01 (affirmative set).
-func Test_PromptMCP_AffirmativeResponses(t *testing.T) {
+func Test_ParseMCPAnswer_AffirmativeResponses(t *testing.T) {
 	t.Parallel()
 
 	affirmatives := []string{"y", "Y", "yes", "YES"}
@@ -414,23 +441,17 @@ func Test_PromptMCP_AffirmativeResponses(t *testing.T) {
 		ans := ans
 		t.Run(ans, func(t *testing.T) {
 			t.Parallel()
-			r := strings.NewReader(ans + "\n")
-			var w bytes.Buffer
-			got := promptMCP(r, &w)
+			got := parseMCPAnswer(ans)
 			if got != MCPYes {
-				t.Errorf("promptMCP(%q) = %q, want MCPYes (REQ-MCP-01)", ans, got)
-			}
-			// Prompt question must have been written.
-			if !strings.Contains(w.String(), mcpPromptQuestion) {
-				t.Errorf("prompt question not written to output")
+				t.Errorf("parseMCPAnswer(%q) = %q, want MCPYes (REQ-MCP-01)", ans, got)
 			}
 		})
 	}
 }
 
-// Test_PromptMCP_NegativeAndEmptyResponses verifies that empty Enter,
-// n, N, no, NO, and garbage all resolve to MCPNo. REQ-MCP-01.
-func Test_PromptMCP_NegativeAndEmptyResponses(t *testing.T) {
+// Test_ParseMCPAnswer_NegativeAndEmptyResponses verifies that empty, n, N, no,
+// NO, and other strings all resolve to MCPNo. REQ-MCP-01.
+func Test_ParseMCPAnswer_NegativeAndEmptyResponses(t *testing.T) {
 	t.Parallel()
 
 	negatives := []string{"", "n", "N", "no", "NO", "maybe", "nope"}
@@ -438,25 +459,71 @@ func Test_PromptMCP_NegativeAndEmptyResponses(t *testing.T) {
 		ans := ans
 		t.Run("\""+ans+"\"", func(t *testing.T) {
 			t.Parallel()
-			r := strings.NewReader(ans + "\n")
-			var w bytes.Buffer
-			got := promptMCP(r, &w)
+			got := parseMCPAnswer(ans)
 			if got != MCPNo {
-				t.Errorf("promptMCP(%q) = %q, want MCPNo (REQ-MCP-01)", ans, got)
+				t.Errorf("parseMCPAnswer(%q) = %q, want MCPNo (REQ-MCP-01)", ans, got)
 			}
 		})
 	}
 }
 
-// Test_PromptMCP_EOF_ReturnsNo verifies that when stdin is closed with no
-// input (EOF), the prompt resolves to MCPNo. REQ-MCP-01.
-func Test_PromptMCP_EOF_ReturnsNo(t *testing.T) {
+// Test_ParseMCPAnswer_TrailingNewline verifies that trailing \r\n is trimmed
+// before matching (REQ-MCP-01 — real Prompt output has newlines trimmed, but
+// we guard explicitly for double-safety).
+func Test_ParseMCPAnswer_TrailingNewline(t *testing.T) {
 	t.Parallel()
 
-	r := strings.NewReader("") // EOF immediately
-	var w bytes.Buffer
-	got := promptMCP(r, &w)
-	if got != MCPNo {
-		t.Errorf("promptMCP(EOF) = %q, want MCPNo", got)
+	got := parseMCPAnswer("y\n")
+	if got != MCPYes {
+		t.Errorf("parseMCPAnswer(%q) = %q, want MCPYes (trailing newline not trimmed?)", "y\n", got)
+	}
+}
+
+// Test_PromptMCP_CallsPromptWithQuestion verifies that promptMCP calls
+// out.Prompt with mcpPromptQuestion (ADR-05 contract).
+func Test_PromptMCP_CallsPromptWithQuestion(t *testing.T) {
+	t.Parallel()
+
+	out := newFakePromptOutput("y")
+	promptMCP(out)
+
+	out.AssertCalledWith(t, "Prompt", mcpPromptQuestion)
+}
+
+// Test_PromptMCP_AffirmativeAnswer_ReturnsMCPYes verifies that promptMCP
+// returns MCPYes when out.Prompt returns an affirmative answer.
+func Test_PromptMCP_AffirmativeAnswer_ReturnsMCPYes(t *testing.T) {
+	t.Parallel()
+
+	affirmatives := []string{"y", "Y", "yes", "YES"}
+	for _, ans := range affirmatives {
+		ans := ans
+		t.Run(ans, func(t *testing.T) {
+			t.Parallel()
+			out := newFakePromptOutput(ans)
+			got := promptMCP(out)
+			if got != MCPYes {
+				t.Errorf("promptMCP with answer %q = %q, want MCPYes", ans, got)
+			}
+		})
+	}
+}
+
+// Test_PromptMCP_NegativeAnswer_ReturnsMCPNo verifies that promptMCP returns
+// MCPNo for empty and non-affirmative answers.
+func Test_PromptMCP_NegativeAnswer_ReturnsMCPNo(t *testing.T) {
+	t.Parallel()
+
+	negatives := []string{"", "n", "N", "no", "NO", "maybe"}
+	for _, ans := range negatives {
+		ans := ans
+		t.Run("\""+ans+"\"", func(t *testing.T) {
+			t.Parallel()
+			out := newFakePromptOutput(ans)
+			got := promptMCP(out)
+			if got != MCPNo {
+				t.Errorf("promptMCP with answer %q = %q, want MCPNo", ans, got)
+			}
+		})
 	}
 }

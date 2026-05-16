@@ -2,16 +2,24 @@
 //
 // This file registers the Cobra command with all flags defined by the spec
 // (REQ-CS-01..05, REQ-JO-01..02, REQ-MCP-01). The handler RunE is provided
-// by handler.go via newRunE(svc).
+// by handler.go via newRunE(svc, out).
+//
+// S-003: NewCommand now accepts output.Output for injection (ADR-03).
+// The caller (composeApp) constructs the Output adapter and passes it here.
 package initialise
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output"
+)
 
 // NewCommand returns the Cobra leaf command for `builder init`.
 //
 // svc is the wired Service instance provided by composeApp (REQ-FW-03).
+// out is the unified output port (ADR-03) — all user-facing emission goes through it.
 // All flag defaults and usage strings use UK English (REQ-JO-01).
-func NewCommand(svc *Service) *cobra.Command {
+func NewCommand(svc *Service, out output.Output) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [directory]",
 		Short: "Initialise a new project workspace",
@@ -29,7 +37,7 @@ working directory if no argument is supplied):
 Use --dry-run to preview the planned operations without writing any files.
 Use --json to receive machine-readable NDJSON output (suitable for CI/AI).`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: newRunE(svc),
+		RunE: newRunE(svc, out),
 	}
 
 	flags := cmd.Flags()

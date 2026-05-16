@@ -7,8 +7,11 @@
 //  4. Build InitRequest and call svc.Init
 //  5. Render the result (delegated to render.renderResult)
 //
+// ADR-03: output.Output is stored once in the closure; all render calls go
+// through out, never os.Stdout or fmt.Print* directly (FF-25 gate).
+//
 // Helpers live in dedicated files within the same package:
-//   - mcp.go     — parseMCPFlag, resolveMCPMode, defaultMCPMode, isStdinTTY
+//   - mcp.go     — parseMCPFlag, resolveMCPMode, defaultMCPMode, isStdinTTY, promptMCP
 //   - dir.go     — canonicaliseDir
 //   - render.go  — renderResult
 package initialise
@@ -21,10 +24,12 @@ import (
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/pathutil"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output"
 )
 
-// newRunE returns the RunE closure wired with svc for use by NewCommand.
-func newRunE(svc *Service) func(*cobra.Command, []string) error {
+// newRunE returns the RunE closure wired with svc and out for use by NewCommand.
+// out is the unified output port (ADR-03); all user-facing emission goes through it.
+func newRunE(svc *Service, out output.Output) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		flags := cmd.Flags()
 
@@ -77,8 +82,9 @@ func newRunE(svc *Service) func(*cobra.Command, []string) error {
 
 		// Resolve MCPPrompt: in non-dry-run mode, actually prompt the user
 		// (REQ-MCP-01). Dry-run skips the prompt entirely (REQ-DR-01).
+		// ADR-05: out.Prompt handles write + read synchronously.
 		if !dryRun && mcpMode == MCPPrompt {
-			mcpMode = promptMCP(cmd.InOrStdin(), cmd.OutOrStdout())
+			mcpMode = promptMCP(out)
 		}
 
 		// Swap to dryRunFS at request time so PlannedOps are collected fresh
@@ -107,6 +113,6 @@ func newRunE(svc *Service) func(*cobra.Command, []string) error {
 			return initErr
 		}
 
-		return renderResult(cmd, result, jsonOut)
+		return renderResult(out, cmd.OutOrStdout(), result, jsonOut)
 	}
 }
