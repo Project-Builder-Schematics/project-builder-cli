@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 
 	renderjson "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/json"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output/themed"
 	prettyrend "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/pretty"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
@@ -481,6 +482,75 @@ func Test_ComposeApp_SetsLipglossColorProfile(t *testing.T) {
 	got := lipgloss.ColorProfile()
 	if got != termenv.TrueColor {
 		t.Errorf("lipgloss.ColorProfile() = %v; want %v (output-port/REQ-05.1)", got, termenv.TrueColor)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// output-port/REQ-05.2: --theme=light flag drives lipgloss profile + SGR bytes
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_ComposeApp_ThemeFlagDrivesLipglossOnNonTTY covers output-port/REQ-05.2.
+//
+// GIVEN --theme=light flag and a non-TTY stdout (with forced TrueColor via env)
+// WHEN composeApp runs to completion
+// THEN lipgloss.ColorProfile() is TrueColor (not the auto-detected Ascii from a bare non-TTY)
+// AND a Heading rendered via the Light-themed adapter produces different bytes
+//
+//	than the same Heading rendered via a Dark-themed adapter (SGR sequences differ).
+//
+// This test exercises the same REQ-05 wiring path as REQ-05.1 but asserts the
+// Light appearance variant end-to-end: profile wired + SGR bytes differ Light vs Dark.
+//
+// Sequential — uses t.Setenv (cannot combine with t.Parallel).
+// Uses t.Cleanup to restore prior lipgloss global state — must NOT use t.Parallel.
+func Test_ComposeApp_ThemeFlagDrivesLipglossOnNonTTY(t *testing.T) {
+	// Block tmux bleed.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	// Force TrueColor detection even on a non-TTY file descriptor:
+	// TTY_FORCE=1 simulates a TTY fd; COLORTERM=truecolor upgrades colorprofile.
+	// Without these, DetectProfile returns NoColor (Ascii) — the auto-detect path.
+	t.Setenv("TTY_FORCE", "1")
+	t.Setenv("TERM", "xterm")
+	t.Setenv("COLORTERM", "truecolor")
+	t.Setenv("NO_COLOR", "")
+
+	// Restore the lipgloss global profile after the test regardless of outcome.
+	priorProfile := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(priorProfile) })
+
+	// Run composeApp with --theme=light flag.
+	app, err := composeApp(Config{themeFlag: ThemeLight})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	// Assert 1 — profile wired: must be TrueColor (NOT Ascii auto-detected on bare non-TTY).
+	got := lipgloss.ColorProfile()
+	if got != termenv.TrueColor {
+		t.Errorf("lipgloss.ColorProfile() = %v; want %v (output-port/REQ-05.2 — profile wired)", got, termenv.TrueColor)
+	}
+
+	// Assert 2 — appearance wired: explicit flag must have set Light appearance.
+	if app.Theme.Appearance() != theme.Light {
+		t.Errorf("app.Theme.Appearance() = %v; want theme.Light (output-port/REQ-05.2 — appearance wired)", app.Theme.Appearance())
+	}
+
+	// Assert 3 — SGR bytes differ Light vs Dark: build a Dark-themed adapter for
+	// the same profile and compare Heading bytes to verify Light palette is active.
+	lightTheme := app.Theme // already Light from composeApp with ThemeLight flag
+
+	darkTheme := theme.New(theme.DefaultPalette(), theme.TrueColor, theme.Dark)
+
+	var lightBuf, darkBuf bytes.Buffer
+	lightAdapter := themed.New(&lightBuf, lightTheme)
+	darkAdapter := themed.New(&darkBuf, darkTheme)
+
+	lightAdapter.Heading("title")
+	darkAdapter.Heading("title")
+
+	if bytes.Equal(lightBuf.Bytes(), darkBuf.Bytes()) {
+		t.Error("Light and Dark themed Heading produced identical bytes — SGR palette not distinct (output-port/REQ-05.2)")
 	}
 }
 

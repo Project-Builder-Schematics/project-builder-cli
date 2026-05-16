@@ -110,6 +110,37 @@ additional setup needed.
 
 ---
 
+## Constructor Injection: Struct Field OR Closure Capture (ADR-03)
+
+ADR-03 specified that feature handlers should store `Output` as an unexported struct field
+(`h.out output.Output`), with constructors receiving it once. In practice, the `init` and
+`new` handlers instead use **closure capture** — the `Output` value is captured by the
+`RunE` closure at construction time rather than stored on a struct:
+
+```go
+// internal/feature/init/handler.go (closure pattern — actually used)
+func newRunE(svc *Service, out output.Output) func(*cobra.Command, []string) error {
+    return func(cmd *cobra.Command, args []string) error {
+        // out captured from constructor argument — same DI semantics
+        out.Heading("Initialising workspace")
+        ...
+    }
+}
+```
+
+Both patterns satisfy the **"Output injected once at construction"** intent of ADR-03.
+The distinction is stylistic, not behavioural:
+
+- **Prefer the struct field** (`h.out`) when the handler has multiple exported methods
+  that all need `Output` — the field avoids repeating the argument across methods.
+- **Closure capture is idiomatic** for Cobra `RunE`-style handlers (a single anonymous
+  function per command), which is the pattern `init` and `new` use today.
+
+FF-25 enforces the architectural boundary (`no-direct-stdout-in-features`) regardless of
+which construction style is used — both patterns route output through the `Output` port.
+
+---
+
 ## Golden Update Workflow
 
 The `themed.Adapter` is covered by a golden matrix in

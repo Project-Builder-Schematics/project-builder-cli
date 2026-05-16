@@ -4,8 +4,10 @@
 // — NOT bytes. Adapter golden tests live in output/themed/themed_test.go.
 //
 // REQ coverage:
-//   - output-port/REQ-05.2 (theme flag drives real output)
 //   - output-discipline/REQ-03.1 (clean tree — init side: no fmt.Fprint* in render.go)
+//   - Note: Spy verifies semantic method routing (method + args) — NOT lipgloss profile
+//     state or SGR bytes. output-port/REQ-05.2 is covered by
+//     Test_ComposeApp_ThemeFlagDrivesLipglossOnNonTTY in cmd/builder/main_test.go.
 //   - REQ-DR-03: dry-run pretty output begins with "DRY RUN — no files written"
 //   - REQ-MCP-02: MCP instructions printed after install when MCP=yes
 //   - REQ-JO-01: --json selects the JSON renderer (bypasses Output)
