@@ -40,6 +40,11 @@ type Config struct {
 	// Accepted values: "pretty", "json", "" (auto — resolved via TTY detection).
 	// Corresponds to the --output persistent flag on the root Cobra command.
 	OutputMode render.OutputMode
+
+	// themeFlag is the resolved --theme flag value (light|dark|auto).
+	// Default zero value ("") is treated as ThemeAuto.
+	// Set by main() via a pre-parse step identical to the outputFlag pattern.
+	themeFlag ThemeFlag
 }
 
 // validate checks the Config for obvious misconfiguration.
@@ -61,6 +66,11 @@ type App struct {
 
 	// Root is the Cobra root command with all feature sub-commands registered.
 	Root *cobra.Command
+
+	// Theme is the resolved theme used to construct the renderer. Exposed for
+	// behavioural assertions in tests (S-003 test seam). Not used by production
+	// callers — the renderer holds the only reference that matters at runtime.
+	Theme theme.Theme
 }
 
 // composeApp wires all dependencies and returns the composed *App.
@@ -77,9 +87,10 @@ func composeApp(cfg Config) (*App, error) {
 	eng := angular.NewAdapter()
 
 	// Theme construction — resolves color profile and appearance (ADR-01).
-	// Default uses NoColor-only resolver in S-000; S-002 wires real profile
-	// detection, S-003 wires --theme flag + BUILDER_THEME env precedence.
-	th, thErr := theme.Default(os.Stdout, "", "")
+	// S-003: reads themeFlag (--theme) and BUILDER_THEME env var.
+	// Precedence: flag (non-auto) > BUILDER_THEME > DetectAppearance().
+	// themeFlag defaults to ThemeAuto ("") which passes through to env then detection.
+	th, thErr := theme.Default(os.Stdout, string(cfg.themeFlag), os.Getenv("BUILDER_THEME"))
 	if thErr != nil {
 		return nil, thErr
 	}
@@ -110,6 +121,12 @@ Run 'builder <command> --help' for command-specific usage.`,
 	// Default is "" (OutputModeAuto) — factory resolves via TTY detection.
 	root.PersistentFlags().String("output", "", `output format: "pretty" (human-readable) or "json" (NDJSON for CI/pipes). Default: auto-detect from terminal.`)
 
+	// --theme persistent flag (REQ-02.1, REQ-05.1): propagated to all sub-commands.
+	// Default is ThemeAuto — resolved from BUILDER_THEME env then DetectAppearance.
+	// ThemeFlag implements pflag.Value so cobra validates the value before Execute.
+	themeVal := ThemeAuto
+	root.PersistentFlags().Var(&themeVal, "theme", `terminal color scheme: light, dark, or auto (default: auto — resolved from BUILDER_THEME env or terminal detection)`)
+
 	// Init feature wiring (REQ-FW-03, ADR-020).
 	// initFS is osFS (real writes); in dry-run mode the handler swaps to dryRunFS.
 	// initPM is the PackageManagerRunner stub (real impl lands in S-005).
@@ -139,6 +156,7 @@ Run 'builder <command> --help' for command-specific usage.`,
 		Engine:   eng,
 		Renderer: ren,
 		Root:     root,
+		Theme:    th,
 	}, nil
 }
 
@@ -170,17 +188,22 @@ func exitCodeForErr(err error) int {
 }
 
 func main() {
-	// Extract --output flag value before calling composeApp.
+	// Extract --output and --theme flag values before calling composeApp.
 	// We use pflag directly on a temporary FlagSet so the factory receives
-	// the resolved mode at startup — before the full Cobra tree is constructed.
+	// the resolved values at startup — before the full Cobra tree is constructed.
 	// This avoids a two-phase init or PersistentPreRunE indirection.
 	fs := cobra.Command{}
 	var outputFlag string
+	themeFlag := ThemeAuto
 	fs.PersistentFlags().StringVar(&outputFlag, "output", "", "")
+	fs.PersistentFlags().Var(&themeFlag, "theme", "")
 	// ParseErrorsWhitelist allows unknown flags (sub-command flags) to pass.
 	_ = fs.ParseFlags(os.Args[1:])
 
-	app, err := composeApp(Config{OutputMode: render.OutputMode(outputFlag)})
+	app, err := composeApp(Config{
+		OutputMode: render.OutputMode(outputFlag),
+		themeFlag:  themeFlag,
+	})
 	if err != nil {
 		slog.Error("failed to initialise application", "error", err)
 		os.Exit(1)
