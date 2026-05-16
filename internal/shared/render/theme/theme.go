@@ -2,6 +2,10 @@
 // resolution of semantic tokens to lipgloss.TerminalColor values. It is a
 // sibling of pretty/ and json/ under render/ so any renderer can consume the
 // same vocabulary without crossing inward imports (ADR-01).
+//
+// Canonical hex values in palette.go are sourced from the design/color-palette
+// Engram entry (project-builder-cli, 2026-05-16). Hex literals are confined to
+// this package (theme-tokens/REQ-03 — enforced by just fitness-hex-leak).
 package theme
 
 import (
