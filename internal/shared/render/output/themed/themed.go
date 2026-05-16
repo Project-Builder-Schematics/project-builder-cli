@@ -4,45 +4,80 @@
 // from the provided theme.Theme via the 8-token vocabulary. It does NOT hold
 // a hard reference to os.Stdout (output-port/REQ-03).
 //
-// S-000 (walking skeleton): only Heading is implemented. The remaining 9 methods
-// (Body, Hint, Success, Warning, Error, Path, Prompt, Newline, Stream) are added
-// in S-001. They panic with a clear message if called prematurely so tests fail
-// loudly rather than silently passing with no output.
+// S-001 completes all 9 remaining methods (Body, Hint, Success, Warning, Error,
+// Path, Prompt, Newline, Stream). Prompt uses a functional option pattern for
+// reader injection; Stream delegates to pretty.Renderer byte-for-byte.
 package themed
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/events"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/pretty"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
+
+// Option configures an Adapter at construction time.
+type Option func(*Adapter)
+
+// WithReader overrides the default reader (os.Stdin) used by Prompt.
+// Primarily useful in tests to inject a fake input source.
+func WithReader(r io.Reader) Option {
+	return func(a *Adapter) {
+		a.reader = r
+	}
+}
 
 // Adapter is the production implementation of output.Output.
 // Construct via New; do not create directly.
 type Adapter struct {
-	w      io.Writer
-	styles styles
+	w        io.Writer
+	styles   adapterStyles
+	renderer *pretty.Renderer
+	reader   io.Reader
 }
 
-// styles groups precomputed lipgloss styles for each semantic token.
+// adapterStyles groups precomputed lipgloss styles for each semantic token.
 // Derived once at construction time (O(1) at render time per ADR-04).
-type styles struct {
-	primary lipgloss.Style
+type adapterStyles struct {
+	primary    lipgloss.Style
+	foreground lipgloss.Style
+	muted      lipgloss.Style
+	success    lipgloss.Style
+	warning    lipgloss.Style
+	errStyle   lipgloss.Style
+	accent     lipgloss.Style
 }
 
 // New constructs an Adapter writing to w, deriving all colors from t.
 // w may be any io.Writer (bytes.Buffer, os.Stdout, etc.) — REQ-03.
-func New(w io.Writer, t theme.Theme) *Adapter {
-	return &Adapter{
-		w: w,
-		styles: styles{
-			primary: lipgloss.NewStyle().Foreground(t.Resolve(theme.TokPrimary)),
+// opts may include WithReader to override the default os.Stdin for Prompt.
+func New(w io.Writer, t theme.Theme, opts ...Option) *Adapter {
+	a := &Adapter{
+		w:        w,
+		renderer: pretty.New(w, t),
+		reader:   os.Stdin,
+		styles: adapterStyles{
+			primary:    lipgloss.NewStyle().Foreground(t.Resolve(theme.TokPrimary)),
+			foreground: lipgloss.NewStyle().Foreground(t.Resolve(theme.TokForeground)),
+			muted:      lipgloss.NewStyle().Foreground(t.Resolve(theme.TokMuted)),
+			success:    lipgloss.NewStyle().Foreground(t.Resolve(theme.TokSuccess)),
+			warning:    lipgloss.NewStyle().Foreground(t.Resolve(theme.TokWarning)),
+			errStyle:   lipgloss.NewStyle().Foreground(t.Resolve(theme.TokError)),
+			accent:     lipgloss.NewStyle().Foreground(t.Resolve(theme.TokAccent)),
 		},
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // emit writes the styled line to a.w, appending a trailing newline.
@@ -60,35 +95,59 @@ func (a *Adapter) Heading(text string) {
 	a.emit(a.styles.primary, text)
 }
 
-// ── S-001 stubs — panic loudly so tests fail clearly if called before S-001 ──
-
-// Body is not yet implemented (S-001).
-func (a *Adapter) Body(_ string) { panic("themed.Adapter.Body: not implemented until S-001") }
-
-// Hint is not yet implemented (S-001).
-func (a *Adapter) Hint(_ string) { panic("themed.Adapter.Hint: not implemented until S-001") }
-
-// Success is not yet implemented (S-001).
-func (a *Adapter) Success(_ string) { panic("themed.Adapter.Success: not implemented until S-001") }
-
-// Warning is not yet implemented (S-001).
-func (a *Adapter) Warning(_ string) { panic("themed.Adapter.Warning: not implemented until S-001") }
-
-// Error is not yet implemented (S-001).
-func (a *Adapter) Error(_ string) { panic("themed.Adapter.Error: not implemented until S-001") }
-
-// Path is not yet implemented (S-001).
-func (a *Adapter) Path(_ string) { panic("themed.Adapter.Path: not implemented until S-001") }
-
-// Prompt is not yet implemented (S-001).
-func (a *Adapter) Prompt(_ string) (string, error) {
-	panic("themed.Adapter.Prompt: not implemented until S-001")
+// Body emits a regular body line (token: Foreground).
+func (a *Adapter) Body(text string) {
+	a.emit(a.styles.foreground, text)
 }
 
-// Newline is not yet implemented (S-001).
-func (a *Adapter) Newline() { panic("themed.Adapter.Newline: not implemented until S-001") }
+// Hint emits a muted hint line (token: Muted).
+func (a *Adapter) Hint(text string) {
+	a.emit(a.styles.muted, text)
+}
 
-// Stream is not yet implemented (S-001).
-func (a *Adapter) Stream(_ context.Context, _ <-chan events.Event) error {
-	panic("themed.Adapter.Stream: not implemented until S-001")
+// Success emits a success line (token: Success).
+func (a *Adapter) Success(text string) {
+	a.emit(a.styles.success, text)
+}
+
+// Warning emits a warning line (token: Warning).
+func (a *Adapter) Warning(text string) {
+	a.emit(a.styles.warning, text)
+}
+
+// Error emits an error line (token: Error).
+func (a *Adapter) Error(text string) {
+	a.emit(a.styles.errStyle, text)
+}
+
+// Path emits a filesystem path line (token: Accent).
+func (a *Adapter) Path(p string) {
+	a.emit(a.styles.accent, p)
+}
+
+// Prompt writes a styled prompt prefix (Primary token, prefix "? ") followed by
+// a space to a.w (no trailing newline — cursor stays on the same line), then
+// reads a single line from a.reader. Returns the line trimmed of trailing \n/\r\n.
+// Any reader error is returned verbatim.
+func (a *Adapter) Prompt(text string) (string, error) {
+	prefix := a.styles.primary.Render("? " + text + " ")
+	_, _ = fmt.Fprint(a.w, prefix)
+
+	line, err := bufio.NewReader(a.reader).ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// Newline emits a blank line for visual spacing.
+func (a *Adapter) Newline() {
+	_, _ = fmt.Fprint(a.w, "\n")
+}
+
+// Stream consumes an events channel until closed, delegating to the
+// pretty.Renderer constructed at New time — produces byte-identical output
+// to a direct pretty.Renderer.Render call (render-pretty/REQ-06.1).
+func (a *Adapter) Stream(ctx context.Context, ch <-chan events.Event) error {
+	return a.renderer.Render(ctx, ch)
 }
