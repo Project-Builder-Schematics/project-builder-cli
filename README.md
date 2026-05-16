@@ -483,6 +483,7 @@ The full breakdown lives at [ROADMAP.md](./ROADMAP.md). Highlights of what's nex
 - [Contributing guide](./CONTRIBUTING.md)
 - [Roadmap](./ROADMAP.md)
 - [Theming — 8-token palette, `--theme` flag, profile degradation, golden-file workflow](./docs/theming.md)
+- [Output port — semantic API for command authors (Heading, Body, Path, Prompt, Stream, etc.)](./docs/output.md)
 - [Architectural decisions, mental model, and command inventory](https://github.com/Project-Builder-Schematics/project-builder-cli/discussions)
 - [License (Apache 2.0)](./LICENSE)
 

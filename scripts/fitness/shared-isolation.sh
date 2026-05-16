@@ -7,8 +7,12 @@
 #   (a) internal/shared/engine and internal/shared/render MUST NOT import any
 #       internal/feature/* package and MUST NOT import concrete adapters.
 #       They may import: stdlib, internal/shared/events, internal/shared/errors,
-#       and — for render/pretty only — charmbracelet/* (ADR-01: lipgloss isolated
-#       to render/pretty; sanctioned at renderer-adapters /build).
+#       and — for the three sanctioned packages only — external lipgloss deps:
+#         render/pretty        — charmbracelet/* (ADR-01, original lipgloss home)
+#         render/theme         — charmbracelet/* + muesli/termenv (ADR-01 extension,
+#                                color-palette-theming: TerminalColor + termenv.Profile)
+#         render/output/themed — charmbracelet/* (unified-output-port S-005,
+#                                production Output adapter uses lipgloss styles)
 #
 #   (b) internal/shared/events and internal/shared/errors MUST only import stdlib
 #       (no external modules, no internal packages).
@@ -52,16 +56,23 @@ while IFS= read -r line; do
             fi
             ;;
           *"."*)
-            # External module — only allowed for render/pretty and render/theme importing charmbracelet/*
-            # (ADR-01 updated by color-palette-theming S-000: lipgloss.TerminalColor lives in
-            # render/theme/resolver.go; render/theme is a sanctioned lipgloss importer alongside
-            # render/pretty. All other render/* and engine must remain stdlib + internal/shared only).
+            # External module — only allowed for the three sanctioned lipgloss importers:
+            #   render/pretty  — ADR-01 (original lipgloss home)
+            #   render/theme   — ADR-01 extension (color-palette-theming: lipgloss.TerminalColor +
+            #                    muesli/termenv for termenv.Profile in resolver.go)
+            #   render/output/themed — unified-output-port (S-005): production Output adapter
+            #                          uses lipgloss styles derived from theme tokens
+            # All other render/* and engine packages must remain stdlib + internal/shared only.
             if [[ "$pkg" == "${SHARED_PREFIX}/render/pretty"* && "$dep" == "github.com/charmbracelet/"* ]]; then
               : # sanctioned: render/pretty may import charmbracelet/* (ADR-01)
             elif [[ "$pkg" == "${SHARED_PREFIX}/render/pretty"* && "$dep" == "github.com/lucasb-eyer/"* ]]; then
               : # sanctioned: go-colorful is a transitive dep pulled by lipgloss/termenv
             elif [[ "$pkg" == "${SHARED_PREFIX}/render/theme"* && "$dep" == "github.com/charmbracelet/"* ]]; then
               : # sanctioned: render/theme may import charmbracelet/lipgloss for TerminalColor (ADR-01 extension, color-palette-theming)
+            elif [[ "$pkg" == "${SHARED_PREFIX}/render/theme"* && "$dep" == "github.com/muesli/termenv"* ]]; then
+              : # sanctioned: render/theme may import muesli/termenv for termenv.Profile (ADR-01 extension, color-palette-theming)
+            elif [[ "$pkg" == "${SHARED_PREFIX}/render/output/themed"* && "$dep" == "github.com/charmbracelet/"* ]]; then
+              : # sanctioned: render/output/themed may import charmbracelet/lipgloss for styled Output adapter (unified-output-port S-005)
             else
               echo "FF-04 shared-isolation: $pkg imports external module $dep" >&2
               fail=1
