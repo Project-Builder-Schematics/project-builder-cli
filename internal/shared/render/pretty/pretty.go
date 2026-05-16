@@ -37,12 +37,11 @@ type Renderer struct {
 	styles Styles
 }
 
-// New constructs a Renderer writing to w with default styles.
-// The theme parameter is accepted for forward-compatibility; it is not yet used
-// to derive styles in S-000 — the existing AdaptiveColor styles are unchanged.
-// TODO(S-005): replace DefaultStyles() with NewStyles(t) once 4→8 Styles migration lands.
-func New(w io.Writer, _ theme.Theme) *Renderer {
-	return &Renderer{w: w, styles: DefaultStyles()}
+// New constructs a Renderer writing to w, deriving all style colors from the
+// provided theme (S-005: theme is now consumed; replaces the previous
+// lipgloss.AdaptiveColor hard-coded styles).
+func New(w io.Writer, t theme.Theme) *Renderer {
+	return &Renderer{w: w, styles: NewStyles(t)}
 }
 
 // Render satisfies the render.Renderer interface. It emits one human-readable
@@ -83,48 +82,48 @@ func (r *Renderer) format(ev events.Event) (string, error) {
 		if e.IsDir {
 			path += "/"
 		}
-		return r.styles.FileOp.Render(glyph + " " + path), nil
+		return r.styles.Accent.Render(glyph + " " + path), nil
 
 	case events.FileModified:
-		return r.styles.FileOp.Render("~ " + e.Path), nil
+		return r.styles.Accent.Render("~ " + e.Path), nil
 
 	case events.FileDeleted:
-		return r.styles.FileOp.Render("- " + e.Path), nil
+		return r.styles.Accent.Render("- " + e.Path), nil
 
 	case events.ScriptStarted:
 		args := mask(strings.Join(e.Args, " "), e.Sensitive)
-		return r.styles.Progress.Render(fmt.Sprintf("▶ %s %s", e.Name, args)), nil
+		return r.styles.Primary.Render(fmt.Sprintf("▶ %s %s", e.Name, args)), nil
 
 	case events.ScriptStopped:
-		return r.styles.Progress.Render(fmt.Sprintf("■ %s (exit %d)", e.Name, e.ExitCode)), nil
+		return r.styles.Primary.Render(fmt.Sprintf("■ %s (exit %d)", e.Name, e.ExitCode)), nil
 
 	case events.LogLine:
 		text := mask(e.Text, e.Sensitive)
-		return r.styles.LogLevel.Render(fmt.Sprintf("[%s] %s", e.Level, text)), nil
+		return r.styles.Muted.Render(fmt.Sprintf("[%s] %s", e.Level, text)), nil
 
 	case events.InputRequested:
 		def := mask(e.DefaultValue, e.Sensitive)
-		return r.styles.Progress.Render(fmt.Sprintf("? %s [%s]", e.Prompt, def)), nil
+		return r.styles.Primary.Render(fmt.Sprintf("? %s [%s]", e.Prompt, def)), nil
 
 	case events.InputProvided:
 		val := mask(e.Value, e.Sensitive)
-		return r.styles.Progress.Render(fmt.Sprintf("> %s", val)), nil
+		return r.styles.Primary.Render(fmt.Sprintf("> %s", val)), nil
 
 	case events.Progress:
-		return r.styles.Progress.Render(fmt.Sprintf("[%d/%d] %s", e.Step, e.Total, e.Label)), nil
+		return r.styles.Primary.Render(fmt.Sprintf("[%d/%d] %s", e.Step, e.Total, e.Label)), nil
 
 	case events.Done:
-		return r.styles.Terminal.Render("✓ done"), nil
+		return r.styles.Foreground.Render("✓ done"), nil
 
 	case events.Failed:
 		msg := ""
 		if e.Err != nil {
 			msg = ": " + e.Err.Error()
 		}
-		return r.styles.Terminal.Render("✗ failed" + msg), nil
+		return r.styles.Foreground.Render("✗ failed" + msg), nil
 
 	case events.Cancelled:
-		return r.styles.Terminal.Render("⊘ cancelled"), nil
+		return r.styles.Foreground.Render("⊘ cancelled"), nil
 
 	default:
 		return "", fmt.Errorf("pretty.Renderer.format: unknown event type %T", ev)

@@ -1,48 +1,52 @@
 package pretty
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
+)
 
 // Styles groups the lipgloss style definitions for PrettyRenderer output.
-// Each field corresponds to a distinct event category, providing visual
-// hierarchy in the terminal.
+// Each field corresponds to a semantic token in the 8-token vocabulary
+// (theme-tokens/REQ-01); colors are sourced from theme.Resolve() — no
+// hard-coded ANSI indices or adaptive-color literals (render-pretty/REQ-02.1).
 //
-// Colours use lipgloss.AdaptiveColor so the renderer renders correctly on
-// both light and dark terminal backgrounds (UX design note).
+// Migration note (S-005): the previous 4 fields (Progress, FileOp, LogLevel,
+// Terminal) are replaced by the canonical 8-token names per the fixed mapping:
+//
+//	Progress → Primary
+//	FileOp   → Accent
+//	LogLevel → Muted
+//	Terminal → Foreground
+//
+// Success, Warning, Error, and Background exist in the struct but are not yet
+// wired to call sites in pretty.go — future slices/commands consume them.
 type Styles struct {
-	// Progress is used for script execution, progress counters, and input prompts.
-	Progress lipgloss.Style
-
-	// FileOp is used for file-system events (created, modified, deleted).
-	// ASCII-safe glyphs: + created, ~ modified, - deleted.
-	FileOp lipgloss.Style
-
-	// LogLevel is used for log lines, colour-coded by severity level.
-	LogLevel lipgloss.Style
-
-	// Terminal is used for terminal/final events (Done, Failed, Cancelled).
-	Terminal lipgloss.Style
+	Primary    lipgloss.Style
+	Accent     lipgloss.Style
+	Foreground lipgloss.Style
+	Muted      lipgloss.Style
+	Background lipgloss.Style
+	Success    lipgloss.Style
+	Warning    lipgloss.Style
+	Error      lipgloss.Style
 }
 
-// DefaultStyles returns the default Styles with lipgloss adaptive colours.
-// The colour choices follow conventional terminal conventions:
-//
-//   - Progress: cyan (neutral, forward-looking)
-//   - FileOp:   green (creation/modification) — overridden per glyph at render time
-//   - LogLevel: white/grey (neutral log baseline) — overridden per level at render time
-//   - Terminal: bold (emphasis for final state)
-func DefaultStyles() Styles {
+// NewStyles constructs a Styles from a theme.Theme. Each field is a
+// lipgloss.Style with the foreground color sourced from theme.Resolve(tok),
+// precomputed once at construction time (O(1) at render time).
+func NewStyles(t theme.Theme) Styles {
+	color := func(tok theme.TokenName) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(t.Resolve(tok))
+	}
 	return Styles{
-		Progress: lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "6", Dark: "14"}), // cyan
-
-		FileOp: lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "2", Dark: "10"}), // green
-
-		LogLevel: lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "8", Dark: "7"}), // grey/white
-
-		Terminal: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "0", Dark: "15"}), // black/white (bold)
+		Primary:    color(theme.TokPrimary),
+		Accent:     color(theme.TokAccent),
+		Foreground: color(theme.TokForeground),
+		Muted:      color(theme.TokMuted),
+		Background: color(theme.TokBackground),
+		Success:    color(theme.TokSuccess),
+		Warning:    color(theme.TokWarning),
+		Error:      color(theme.TokError),
 	}
 }

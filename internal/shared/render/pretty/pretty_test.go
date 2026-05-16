@@ -1,6 +1,6 @@
 // Package pretty_test covers pretty.Renderer acceptance criteria.
 //
-// REQ-01.1 — interface satisfaction (compile-time)
+// REQ-01.1 — interface satisfaction (compile-time) + theme consumption
 // REQ-01.2 — channel-close terminates Render
 // REQ-01.3 — context cancellation terminates Render
 // REQ-02.1 — all 12 event types produce non-empty output
@@ -10,15 +10,20 @@
 // REQ-03.3 — InputProvided.Sensitive=true masks Value → [REDACTED]
 // REQ-03.4 — ScriptStarted.Sensitive=true masks Args → [REDACTED]
 // REQ-03.5 — Sensitive=false renders value unchanged
-// REQ-04.1 — styles.go defines at least 4 named style variables
+// REQ-03.1 (public surface) — *Renderer public method set is unchanged
 package pretty_test
 
 import (
 	"context"
 	"os"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/events"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/pretty"
@@ -247,50 +252,92 @@ func Test_Renderer_SensitiveFields(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// REQ-04.1 — styles.go defines at least 4 named style variables
+// REQ render-pretty/01.1 — New consumes theme; Primary foreground resolves hex
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Test_Styles_AtLeastFourStyleVars reads styles.go and asserts that at least
-// 4 named style variables are defined (progress, fileOp, logLevel, terminal).
-// Mutation: remove a style var → this count check fails.
-func Test_Styles_AtLeastFourStyleVars(t *testing.T) {
-	t.Parallel()
+// Test_NewRenderer_ConsumesTheme pins the global lipgloss profile to TrueColor,
+// constructs a TrueColor/Dark theme, builds a Renderer, and verifies that
+// r.styles.Primary produces a foreground SGR containing the RGB for #A78BFA
+// when rendered. Also asserts AdaptiveColor is absent from styles.go source.
+//
+// Sequential — uses global lipgloss state mutation.
+func Test_NewRenderer_ConsumesTheme(t *testing.T) {
+	// Do NOT call t.Parallel() — mutates global lipgloss renderer.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
 
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+
+	th := theme.New(theme.DefaultPalette(), theme.TrueColor, theme.Dark)
+
+	var buf strings.Builder
+	r := pretty.New(&buf, th)
+
+	// Send a ScriptStarted so Primary (Progress→Primary) gets exercised.
+	ch := make(chan events.Event, 1)
+	ch <- events.ScriptStarted{EventBase: base, Name: "test", Args: []string{}}
+	close(ch)
+
+	if err := r.Render(context.Background(), ch); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	got := buf.String()
+	// #A78BFA = RGB(167,139,250) — truecolor SGR: ESC[38;2;167;139;250m
+	const wantSGR = "\x1b[38;2;167;139;250m"
+	if !strings.Contains(got, wantSGR) {
+		t.Errorf("Primary foreground not found in rendered output\nwant SGR: %q\ngot: %q", wantSGR, got)
+	}
+
+	// styles.go must NOT contain AdaptiveColor literals (replaced by theme.Resolve).
 	src, err := os.ReadFile("styles.go")
 	if err != nil {
 		t.Fatalf("cannot read styles.go: %v", err)
 	}
-
-	content := string(src)
-
-	// Each style field must appear in the Styles struct or as a named var.
-	// We check for the canonical names established in the design.
-	requiredStyles := []string{
-		"Progress",
-		"FileOp",
-		"LogLevel",
-		"Terminal",
-	}
-
-	for _, style := range requiredStyles {
-		if !strings.Contains(content, style) {
-			t.Errorf("styles.go does not define style %q (REQ-04.1)", style)
-		}
+	if strings.Contains(string(src), "AdaptiveColor") {
+		t.Error("styles.go must not contain lipgloss.AdaptiveColor — use theme.Resolve() instead (S-005)")
 	}
 }
 
-// Test_Styles_UsesAdaptiveColor verifies that styles.go uses AdaptiveColor
-// for light/dark terminal background compatibility (UX design note).
-func Test_Styles_UsesAdaptiveColor(t *testing.T) {
+// ──────────────────────────────────────────────────────────────────────────────
+// REQ render-pretty/03.1 — *Renderer public method surface is unchanged
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_PrettyRenderer_PublicSurfaceUnchanged uses reflection to assert the
+// exported method set of *pretty.Renderer matches the baseline captured at
+// S-005 authoring time. This is the regression net protecting ADR-011 and
+// the design's promise of API stability.
+//
+// Baseline: {"Render"} — only Render is exported.
+func Test_PrettyRenderer_PublicSurfaceUnchanged(t *testing.T) {
 	t.Parallel()
 
-	src, err := os.ReadFile("styles.go")
-	if err != nil {
-		t.Fatalf("cannot read styles.go: %v", err)
+	// Baseline: exported methods of *Renderer as of S-004 HEAD.
+	// Update this list ONLY if the public API contract changes intentionally.
+	wantMethods := []string{
+		"Render",
 	}
 
-	if !strings.Contains(string(src), "AdaptiveColor") {
-		t.Error("styles.go should use lipgloss.AdaptiveColor for light/dark terminal compatibility (UX design note)")
+	rt := reflect.TypeOf((*pretty.Renderer)(nil))
+	var gotMethods []string
+	for i := range rt.NumMethod() {
+		m := rt.Method(i)
+		if m.IsExported() {
+			gotMethods = append(gotMethods, m.Name)
+		}
+	}
+	sort.Strings(gotMethods)
+	sort.Strings(wantMethods)
+
+	if len(gotMethods) != len(wantMethods) {
+		t.Fatalf("*Renderer exported method count: got %d, want %d\ngot:  %v\nwant: %v",
+			len(gotMethods), len(wantMethods), gotMethods, wantMethods)
+	}
+	for i, name := range wantMethods {
+		if gotMethods[i] != name {
+			t.Errorf("method[%d]: got %q, want %q", i, gotMethods[i], name)
+		}
 	}
 }
 
