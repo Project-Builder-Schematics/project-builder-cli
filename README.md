@@ -119,6 +119,7 @@ These flags will work consistently across commands as they ship:
 | `--conflict-policy=child-wins\|strict` | Per-invocation override of the project's conflict policy. |
 | `--source=local\|cached` | Force the Discoverer to use a specific source (default: LOCAL → CACHED). |
 | `--json` | Machine-readable JSON output for AI and CI consumption. |
+| `--theme=light\|dark\|auto` | Force light or dark appearance, or auto-detect from terminal (default: `auto`). See [docs/theming.md](./docs/theming.md). |
 
 Boolean conventions: `--flag` = `true`, `--no-flag` = `false`, `--flag=value` = the explicit value.
 
@@ -481,6 +482,7 @@ The full breakdown lives at [ROADMAP.md](./ROADMAP.md). Highlights of what's nex
 
 - [Contributing guide](./CONTRIBUTING.md)
 - [Roadmap](./ROADMAP.md)
+- [Theming — 8-token palette, `--theme` flag, profile degradation, golden-file workflow](./docs/theming.md)
 - [Architectural decisions, mental model, and command inventory](https://github.com/Project-Builder-Schematics/project-builder-cli/discussions)
 - [License (Apache 2.0)](./LICENSE)
 

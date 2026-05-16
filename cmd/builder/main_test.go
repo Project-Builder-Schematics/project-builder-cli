@@ -5,6 +5,7 @@
 //   - composition-root.REQ-01.2 — composeApp function body is ≤120 SLOC
 //   - cobra-command-tree.REQ-01.1 — Root has exactly 8 leaf commands
 //   - dependencies.REQ-01.1 — go.mod pins cobra v1.9.x, viper v1.19.x, charmbracelet/log v0.4.x
+//   - theme-profile-detection/REQ-02.1, 02.2, 03.1, 03.2 — flag/env precedence (S-003)
 //
 // CONTRACT:STUB — wires FakeEngine + NoopRenderer; production wiring at /plan #3+
 package main
@@ -21,6 +22,7 @@ import (
 
 	renderjson "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/json"
 	prettyrend "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/pretty"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
 
 // Test_ComposeApp_AllInterfaceFieldsNonNil covers composition-root.REQ-01.1.
@@ -304,6 +306,141 @@ func Test_RootCmd_OutputFlagInHelp(t *testing.T) {
 	helpText := buf.String()
 	if !strings.Contains(helpText, "--output") {
 		t.Errorf("--help output does not contain \"--output\"; got:\n%s", helpText)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// S-000 — smoke test: NoColor theme wired through composeApp (render-pretty/REQ-01.1)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_ComposeApp_NoColorTheme_ZeroSGR verifies that composeApp wires the
+// renderer via the new NewRenderer(mode, theme, isTTY) signature and that
+// piped (non-TTY) output produces zero SGR escape sequences.
+//
+// Acceptance (S-000):
+//   - composeApp constructs the renderer via NewRenderer(mode, theme, isTTY)
+//   - Piped output contains no SGR escapes (\x1b[)
+func Test_ComposeApp_NoColorTheme_ZeroSGR(t *testing.T) {
+	t.Parallel()
+
+	// composeApp must succeed with default (auto) mode.
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	// Drive the renderer with a piped (non-TTY) buffer.
+	var buf bytes.Buffer
+	app.Root.SetOut(&buf)
+	app.Root.SetErr(&buf)
+	app.Root.SetArgs([]string{"info"})
+	_ = app.Root.Execute()
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("piped output contains SGR escape sequences; want zero SGR bytes\noutput: %q", out)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// S-003 — theme flag / env precedence integration tests
+// REQ-IDs: theme-profile-detection/REQ-02.1, 02.2, 03.1, 03.2
+//
+// TTY / colorprofile hygiene (lessons-learned/colorprofile-test-gotchas):
+//   - t.Setenv("TMUX", "")       — block tmux bleed (colorprofile shells out to `tmux info`)
+//   - t.Setenv("TMUX_PANE", "")  — block tmux pane bleed
+//
+// DetectAppearance does not depend on colorprofile/TTY, so TTY_FORCE is not
+// needed here. The hygiene guard is a defensive boundary against unexpected
+// colorprofile side-effects during composeApp (which calls DetectProfile).
+// ──────────────────────────────────────────────────────────────────────────────
+
+// applyColorprofileHygiene isolates the test from TMUX and colorprofile TTY
+// heuristics. Must be called before any composeApp invocation in S-003 tests.
+func applyColorprofileHygiene(t *testing.T) {
+	t.Helper()
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+}
+
+// Test_Theme_Flag_Light_OverridesDetection covers theme-profile-detection/REQ-02.1.
+// With themeFlag=ThemeLight the constructed theme must have Appearance == theme.Light
+// regardless of what the environment would otherwise detect.
+//
+// Note: t.Setenv is used for env isolation — cannot be combined with t.Parallel().
+func Test_Theme_Flag_Light_OverridesDetection(t *testing.T) {
+	applyColorprofileHygiene(t)
+
+	app, err := composeApp(Config{themeFlag: ThemeLight})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	got := app.Theme.Appearance()
+	if got != theme.Light {
+		t.Errorf("Appearance() = %v; want theme.Light (REQ-02.1)", got)
+	}
+}
+
+// Test_Theme_DefaultAuto_UsesDetection covers theme-profile-detection/REQ-02.2.
+// With themeFlag=ThemeAuto and BUILDER_THEME unset, the theme appearance must equal
+// whatever DetectAppearance returns for the test environment (no hardcoded expectation).
+//
+// Note: t.Setenv is used for env isolation — cannot be combined with t.Parallel().
+func Test_Theme_DefaultAuto_UsesDetection(t *testing.T) {
+	applyColorprofileHygiene(t)
+	t.Setenv("BUILDER_THEME", "") // ensure env does not intervene
+
+	// Compute expected appearance the same way composeApp would in auto mode.
+	expected := theme.DetectAppearance(os.Stdout)
+
+	app, err := composeApp(Config{themeFlag: ThemeAuto})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	got := app.Theme.Appearance()
+	if got != expected {
+		t.Errorf("Appearance() = %v; want detected (%v) (REQ-02.2)", got, expected)
+	}
+}
+
+// Test_Theme_Env_Applied_When_Flag_Auto covers theme-profile-detection/REQ-03.1.
+// With BUILDER_THEME=dark and themeFlag=ThemeAuto, the theme must resolve to Dark.
+//
+// Note: t.Setenv is used for env isolation — cannot be combined with t.Parallel().
+func Test_Theme_Env_Applied_When_Flag_Auto(t *testing.T) {
+	applyColorprofileHygiene(t)
+	t.Setenv("BUILDER_THEME", "dark")
+
+	app, err := composeApp(Config{themeFlag: ThemeAuto})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	got := app.Theme.Appearance()
+	if got != theme.Dark {
+		t.Errorf("Appearance() = %v; want theme.Dark (REQ-03.1)", got)
+	}
+}
+
+// Test_Theme_Flag_Wins_Over_Env covers theme-profile-detection/REQ-03.2.
+// With BUILDER_THEME=dark AND themeFlag=ThemeLight, the flag must win and
+// appearance must be Light.
+//
+// Note: t.Setenv is used for env isolation — cannot be combined with t.Parallel().
+func Test_Theme_Flag_Wins_Over_Env(t *testing.T) {
+	applyColorprofileHygiene(t)
+	t.Setenv("BUILDER_THEME", "dark")
+
+	app, err := composeApp(Config{themeFlag: ThemeLight})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	got := app.Theme.Appearance()
+	if got != theme.Light {
+		t.Errorf("Appearance() = %v; want theme.Light (flag must win over env — REQ-03.2)", got)
 	}
 }
 
