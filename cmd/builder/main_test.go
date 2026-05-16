@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
 	renderjson "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/json"
@@ -441,6 +443,44 @@ func Test_Theme_Flag_Wins_Over_Env(t *testing.T) {
 	got := app.Theme.Appearance()
 	if got != theme.Light {
 		t.Errorf("Appearance() = %v; want theme.Light (flag must win over env — REQ-03.2)", got)
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// S-000 — output-port/REQ-05.1: composeApp wires lipgloss.SetColorProfile
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_ComposeApp_SetsLipglossColorProfile covers output-port/REQ-05.1.
+//
+// GIVEN a theme detected as TrueColor (forced via env)
+// WHEN composeApp runs to completion
+// THEN lipgloss.ColorProfile() returns termenv.TrueColor
+//
+// Sequential — uses t.Setenv (cannot combine with t.Parallel).
+// Uses t.Cleanup to restore prior lipgloss global state — must NOT use t.Parallel.
+func Test_ComposeApp_SetsLipglossColorProfile(t *testing.T) {
+	// Isolate from tmux bleed.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+	// Force TrueColor detection: TTY_FORCE=1 simulates a TTY fd;
+	// COLORTERM=truecolor upgrades colorprofile to TrueColor.
+	t.Setenv("TTY_FORCE", "1")
+	t.Setenv("TERM", "xterm")
+	t.Setenv("COLORTERM", "truecolor")
+	t.Setenv("NO_COLOR", "")
+
+	// Restore lipgloss global profile after test regardless of outcome.
+	priorProfile := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(priorProfile) })
+
+	_, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	got := lipgloss.ColorProfile()
+	if got != termenv.TrueColor {
+		t.Errorf("lipgloss.ColorProfile() = %v; want %v (output-port/REQ-05.1)", got, termenv.TrueColor)
 	}
 }
 
