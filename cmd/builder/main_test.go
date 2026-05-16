@@ -307,6 +307,39 @@ func Test_RootCmd_OutputFlagInHelp(t *testing.T) {
 	}
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// S-000 — smoke test: NoColor theme wired through composeApp (render-pretty/REQ-01.1)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Test_ComposeApp_NoColorTheme_ZeroSGR verifies that composeApp wires the
+// renderer via the new NewRenderer(mode, theme, isTTY) signature and that
+// piped (non-TTY) output produces zero SGR escape sequences.
+//
+// Acceptance (S-000):
+//   - composeApp constructs the renderer via NewRenderer(mode, theme, isTTY)
+//   - Piped output contains no SGR escapes (\x1b[)
+func Test_ComposeApp_NoColorTheme_ZeroSGR(t *testing.T) {
+	t.Parallel()
+
+	// composeApp must succeed with default (auto) mode.
+	app, err := composeApp(Config{})
+	if err != nil {
+		t.Fatalf("composeApp returned error: %v", err)
+	}
+
+	// Drive the renderer with a piped (non-TTY) buffer.
+	var buf bytes.Buffer
+	app.Root.SetOut(&buf)
+	app.Root.SetErr(&buf)
+	app.Root.SetArgs([]string{"info"})
+	_ = app.Root.Execute()
+
+	out := buf.String()
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("piped output contains SGR escape sequences; want zero SGR bytes\noutput: %q", out)
+	}
+}
+
 // Test_GoMod_HasPinnedDeps covers dependencies.REQ-01.1.
 // Reads go.mod and verifies cobra v1.9.x, viper v1.19.x, charmbracelet/log v0.4.x.
 // cobra was bumped from v1.8.x to v1.9.x when charmbracelet/fang was added (fang requires >= v1.9).

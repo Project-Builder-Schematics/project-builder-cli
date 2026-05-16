@@ -8,6 +8,7 @@ import (
 
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
 
 // compile-time interface satisfaction assertions (REQ-01.1, REQ-05.1).
@@ -24,6 +25,9 @@ var (
 	isTTYTrue  = func() bool { return true }
 	isTTYFalse = func() bool { return false }
 )
+
+// noColorTheme is a deterministic NoColor theme for use in factory tests.
+var noColorTheme = theme.New(theme.Palette{}, theme.NoColor, theme.Light)
 
 // Test_NewRenderer_ExplicitMode covers REQ-09.1, REQ-09.2, REQ-09.3.
 // When --output is explicitly set, TTY state is irrelevant.
@@ -62,7 +66,7 @@ func Test_NewRenderer_ExplicitMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			r, err := render.NewRenderer(tt.mode, tt.isTTY)
+			r, err := render.NewRenderer(tt.mode, noColorTheme, tt.isTTY)
 
 			if tt.wantErrCode != "" {
 				if err == nil {
@@ -126,7 +130,7 @@ func Test_NewRenderer_AutoMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			r, err := render.NewRenderer(render.OutputModeAuto, tt.isTTY)
+			r, err := render.NewRenderer(render.OutputModeAuto, noColorTheme, tt.isTTY)
 			if err != nil {
 				t.Fatalf("unexpected error for auto mode: %v", err)
 			}
@@ -155,7 +159,7 @@ func Test_NewRenderer_TTYInjectionHonoured(t *testing.T) {
 	t.Parallel()
 
 	// isTTY=true → pretty.Renderer regardless of the real terminal state.
-	r, err := render.NewRenderer(render.OutputModeAuto, isTTYTrue)
+	r, err := render.NewRenderer(render.OutputModeAuto, noColorTheme, isTTYTrue)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +168,7 @@ func Test_NewRenderer_TTYInjectionHonoured(t *testing.T) {
 	}
 
 	// isTTY=false → json.Renderer regardless of the real terminal state.
-	r2, err2 := render.NewRenderer(render.OutputModeAuto, isTTYFalse)
+	r2, err2 := render.NewRenderer(render.OutputModeAuto, noColorTheme, isTTYFalse)
 	if err2 != nil {
 		t.Fatalf("unexpected error: %v", err2)
 	}

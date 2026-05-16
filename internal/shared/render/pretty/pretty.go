@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/events"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
 
 // mask returns "[REDACTED]" when sensitive is true, otherwise returns v unchanged.
@@ -37,7 +38,10 @@ type Renderer struct {
 }
 
 // New constructs a Renderer writing to w with default styles.
-func New(w io.Writer) *Renderer {
+// The theme parameter is accepted for forward-compatibility; it is not yet used
+// to derive styles in S-000 — the existing AdaptiveColor styles are unchanged.
+// TODO(S-005): replace DefaultStyles() with NewStyles(t) once 4→8 Styles migration lands.
+func New(w io.Writer, _ theme.Theme) *Renderer {
 	return &Renderer{w: w, styles: DefaultStyles()}
 }
 

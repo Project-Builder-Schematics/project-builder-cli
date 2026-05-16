@@ -31,6 +31,7 @@ import (
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
 
 // Config holds application-wide configuration.
@@ -75,10 +76,18 @@ func composeApp(cfg Config) (*App, error) {
 	// Engine adapter — AngularSubprocessAdapter (real; /plan #4 S-000).
 	eng := angular.NewAdapter()
 
+	// Theme construction — resolves color profile and appearance (ADR-01).
+	// Default uses NoColor-only resolver in S-000; S-002 wires real profile
+	// detection, S-003 wires --theme flag + BUILDER_THEME env precedence.
+	th, thErr := theme.Default(os.Stdout, "", "")
+	if thErr != nil {
+		return nil, thErr
+	}
+
 	// Renderer adapter — selected by factory based on --output flag + TTY.
 	// isTTY is injected here (production path); tests pass their own stub.
 	isTTY := func() bool { return isatty.IsTerminal(os.Stdout.Fd()) }
-	ren, renErr := render.NewRenderer(cfg.OutputMode, isTTY)
+	ren, renErr := render.NewRenderer(cfg.OutputMode, th, isTTY)
 	if renErr != nil {
 		return nil, renErr
 	}

@@ -22,10 +22,14 @@ import (
 
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/events"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/pretty"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/theme"
 )
 
 // base is a reusable EventBase for test events.
 var base = events.EventBase{Seq: 1, At: time.Now()}
+
+// noColorTheme is a deterministic NoColor theme for use in pretty tests.
+var noColorTheme = theme.New(theme.Palette{}, theme.NoColor, theme.Light)
 
 // ──────────────────────────────────────────────────────────────────────────────
 // REQ-01.1 — compile-time interface satisfaction
@@ -46,7 +50,7 @@ func Test_Renderer_ChannelClose_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	var buf strings.Builder
-	r := pretty.New(&buf)
+	r := pretty.New(&buf, noColorTheme)
 
 	ch := make(chan events.Event, 1)
 	ch <- events.Done{EventBase: base}
@@ -69,7 +73,7 @@ func Test_Renderer_ContextCancel_Terminates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var buf strings.Builder
-	r := pretty.New(&buf)
+	r := pretty.New(&buf, noColorTheme)
 
 	done := make(chan error, 1)
 	go func() {
@@ -122,7 +126,7 @@ func Test_Renderer_All12EventTypes_NonEmptyLines(t *testing.T) {
 			close(ch)
 
 			var buf strings.Builder
-			r := pretty.New(&buf)
+			r := pretty.New(&buf, noColorTheme)
 			if err := r.Render(context.Background(), ch); err != nil {
 				t.Fatalf("[%s] Render returned error: %v", tt.name, err)
 			}
@@ -226,7 +230,7 @@ func Test_Renderer_SensitiveFields(t *testing.T) {
 			close(ch)
 
 			var buf strings.Builder
-			r := pretty.New(&buf)
+			r := pretty.New(&buf, noColorTheme)
 			if err := r.Render(context.Background(), ch); err != nil {
 				t.Fatalf("[%s] Render error: %v", tt.reqID, err)
 			}
@@ -302,7 +306,7 @@ func Test_Renderer_Wiring_DoneFollowsSecret(t *testing.T) {
 	close(ch)
 
 	var buf strings.Builder
-	r := pretty.New(&buf)
+	r := pretty.New(&buf, noColorTheme)
 	err := r.Render(context.Background(), ch)
 	if err != nil {
 		t.Fatalf("Render returned error: %v", err)

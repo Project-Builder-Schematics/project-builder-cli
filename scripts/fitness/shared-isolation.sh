@@ -52,13 +52,16 @@ while IFS= read -r line; do
             fi
             ;;
           *"."*)
-            # External module — only allowed for render/pretty importing charmbracelet/*
-            # (ADR-01: lipgloss isolated to render/pretty; all other render/* and engine
-            # must remain stdlib + internal/shared only).
+            # External module — only allowed for render/pretty and render/theme importing charmbracelet/*
+            # (ADR-01 updated by color-palette-theming S-000: lipgloss.TerminalColor lives in
+            # render/theme/resolver.go; render/theme is a sanctioned lipgloss importer alongside
+            # render/pretty. All other render/* and engine must remain stdlib + internal/shared only).
             if [[ "$pkg" == "${SHARED_PREFIX}/render/pretty"* && "$dep" == "github.com/charmbracelet/"* ]]; then
               : # sanctioned: render/pretty may import charmbracelet/* (ADR-01)
             elif [[ "$pkg" == "${SHARED_PREFIX}/render/pretty"* && "$dep" == "github.com/lucasb-eyer/"* ]]; then
               : # sanctioned: go-colorful is a transitive dep pulled by lipgloss/termenv
+            elif [[ "$pkg" == "${SHARED_PREFIX}/render/theme"* && "$dep" == "github.com/charmbracelet/"* ]]; then
+              : # sanctioned: render/theme may import charmbracelet/lipgloss for TerminalColor (ADR-01 extension, color-palette-theming)
             else
               echo "FF-04 shared-isolation: $pkg imports external module $dep" >&2
               fail=1
