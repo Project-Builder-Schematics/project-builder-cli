@@ -14,7 +14,6 @@
 package newfeature_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +26,7 @@ import (
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output/outputtest"
 )
 
 // minimalPBJSONForE2E is the post-init project-builder.json used in E2E tests.
@@ -326,13 +326,14 @@ func Test_E2E_RenderPretty_ShowsCreatedFiles(t *testing.T) {
 		t.Fatalf("RegisterSchematic: %v", err)
 	}
 
-	var buf bytes.Buffer
-	newfeature.RenderPretty(&buf, *result)
+	// S-004: RenderPretty now takes output.Output — assert via Spy.
+	// ADR-04: feature tests assert calls, not bytes.
+	spy := outputtest.New()
+	newfeature.RenderPretty(spy, *result)
 
-	got := buf.String()
-	// Pretty output should mention the created files.
-	if len(result.FilesCreated) > 0 && got == "" {
-		t.Error("RenderPretty: empty output for non-dry-run result with files created")
+	// Pretty output should have Path calls for each created file.
+	if len(result.FilesCreated) > 0 {
+		spy.AssertCalled(t, "Path")
 	}
 }
 
@@ -551,16 +552,22 @@ func Test_E2E_SchemaDTS_Present(t *testing.T) {
 
 	// Simulate handler behavior: the handler appends warnings and then renders.
 	// In S-003, the handler MUST NOT append the "schema.d.ts generation pending" WARN.
-	// We simulate by rendering the result and asserting no "pending" text appears.
-	var buf bytes.Buffer
-	newfeature.RenderPretty(&buf, *result)
-	rendered := buf.String()
+	// S-004: RenderPretty takes output.Output — assert via Spy (ADR-04).
+	spy := outputtest.New()
+	newfeature.RenderPretty(spy, *result)
 
-	if strings.Contains(rendered, "pending") {
-		t.Errorf("rendered output contains 'pending' WARN (should be removed in S-003):\n%s", rendered)
-	}
-	if strings.Contains(rendered, "schema.d.ts generation") {
-		t.Errorf("rendered output still shows deferred .d.ts WARN (S-003 implements it):\n%s", rendered)
+	// Verify no Warning call contains "pending" or "schema.d.ts generation".
+	for _, call := range spy.Calls() {
+		if call.Method == "Warning" {
+			for _, arg := range call.Args {
+				if strings.Contains(arg, "pending") {
+					t.Errorf("Warning call contains 'pending' (deferred WARN must be removed in S-003): %q", arg)
+				}
+				if strings.Contains(arg, "schema.d.ts generation") {
+					t.Errorf("Warning call shows deferred .d.ts WARN (S-003 implements it): %q", arg)
+				}
+			}
+		}
 	}
 }
 

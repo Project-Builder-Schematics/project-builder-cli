@@ -168,7 +168,7 @@ Run 'builder <command> --help' for command-specific usage.`,
 	root.AddCommand(validate.NewCommand())               // validate
 	root.AddCommand(remove.NewCommand())                 // remove
 	root.AddCommand(skill.NewCommand())                  // skill (parent; skill update is its leaf)
-	root.AddCommand(newfeature.NewCommand(newSvc))       // new (parent; schematic + collection leaves)
+	root.AddCommand(newfeature.NewCommand(newSvc, out))  // new (S-004: out injected)
 
 	return &App{
 		Engine:   eng,

@@ -8,9 +8,13 @@
 //  4. Build NewCollectionRequest and call svc.RegisterCollection
 //  5. Render the result via RenderPretty or RenderJSON (ADR-019)
 //
+// ADR-03: output.Output is captured in the closure; all render calls go through
+// out, never os.Stdout or fmt.Print* directly (FF-25 gate).
+//
 // S-004: real implementation. --inline is not surfaced on the collection command
 // (per spec — collections have no inline mode), but the preflight guard is wired
 // here for future-safety and spec compliance (REQ-NCP-03).
+// S-004: out output.Output added per ADR-03.
 package newfeature
 
 import (
@@ -20,11 +24,13 @@ import (
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output"
 )
 
 // handleCollection returns the RunE closure for `builder new collection`.
-// svc is the wired Service. All flag values are parsed inside the closure.
-func handleCollection(svc *Service) func(cmd *cobra.Command, args []string, dryRun, jsonOut bool) error {
+// svc is the wired Service. out is the unified output port (ADR-03).
+// All flag values are parsed inside the closure.
+func handleCollection(svc *Service, out output.Output) func(cmd *cobra.Command, args []string, dryRun, jsonOut bool) error {
 	return func(cmd *cobra.Command, args []string, dryRun, jsonOut bool) error {
 		flags := cmd.Flags()
 
@@ -77,7 +83,7 @@ func handleCollection(svc *Service) func(cmd *cobra.Command, args []string, dryR
 		if jsonOut {
 			return RenderJSON(cmd.OutOrStdout(), *result)
 		}
-		RenderPretty(cmd.OutOrStdout(), *result)
+		RenderPretty(out, *result)
 		return nil
 	}
 }

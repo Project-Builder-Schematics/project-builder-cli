@@ -6,6 +6,9 @@
 //   - REQ-NC-06 (partial): collection --dry-run returns result (handler smoke)
 //   - REQ-NCP-03: handleCollection rejects --publishable + --inline at handler level
 //
+// S-004: handler functions updated to accept output.Output; tests inject
+// outputtest.Spy for assertion (ADR-04).
+//
 // NOTE: Full command alias and --help tests live in command_test.go (Task F).
 // This file covers handler RunE behaviour in isolation.
 package newfeature
@@ -18,6 +21,7 @@ import (
 
 	errs "github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/errors"
 	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/fswriter"
+	"github.com/Project-Builder-Schematics/project-builder-cli/internal/shared/render/output/outputtest"
 )
 
 // newTestService returns a Service wired with a dryRun FSWriter for handler tests.
@@ -50,16 +54,35 @@ func newCollectionCmd() *cobra.Command {
 // Test_HandleSchematic_DryRun_ReturnsDryRunResult verifies the schematic handler
 // returns a valid result in dry-run mode (REQ-NS-05).
 // S-001: handler now dispatches to real service; dry-run returns planned ops.
+// S-004: out injected as Spy; no Output assertions here (smoke test only).
 func Test_HandleSchematic_DryRun_ReturnsDryRunResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService()
+	spy := outputtest.New()
 	cmd := newSchematicCmd()
 	// Pass dryRun=true so no project-builder.json read is attempted.
-	err := handleSchematic(svc)(cmd, []string{"my-schematic"}, true, false)
+	err := handleSchematic(svc, spy)(cmd, []string{"my-schematic"}, true, false)
 	if err != nil {
 		t.Errorf("handleSchematic(dry-run): unexpected error: %v", err)
 	}
+}
+
+// Test_HandleSchematic_DryRun_EmitsOutput verifies the schematic handler
+// calls at least Heading on the Output in dry-run mode.
+// S-004: ADR-04 — handler tests assert Output calls via Spy.
+func Test_HandleSchematic_DryRun_EmitsOutput(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService()
+	spy := outputtest.New()
+	cmd := newSchematicCmd()
+	if err := handleSchematic(svc, spy)(cmd, []string{"my-schematic"}, true, false); err != nil {
+		t.Fatalf("handleSchematic(dry-run): unexpected error: %v", err)
+	}
+
+	// Dry-run should have emitted a Heading.
+	spy.AssertCalled(t, "Heading")
 }
 
 // Test_HandleCollection_DryRun_ReturnsResult verifies the collection handler
@@ -69,12 +92,28 @@ func Test_HandleCollection_DryRun_ReturnsResult(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService()
+	spy := outputtest.New()
 	cmd := newCollectionCmd()
 	// Pass dryRun=true so no project-builder.json read is attempted.
-	err := handleCollection(svc)(cmd, []string{"my-collection"}, true, false)
+	err := handleCollection(svc, spy)(cmd, []string{"my-collection"}, true, false)
 	if err != nil {
 		t.Errorf("handleCollection(dry-run): unexpected error: %v", err)
 	}
+}
+
+// Test_HandleCollection_DryRun_EmitsOutput verifies the collection handler
+// calls at least Heading on the Output in dry-run mode.
+func Test_HandleCollection_DryRun_EmitsOutput(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestService()
+	spy := outputtest.New()
+	cmd := newCollectionCmd()
+	if err := handleCollection(svc, spy)(cmd, []string{"my-collection"}, true, false); err != nil {
+		t.Fatalf("handleCollection(dry-run): unexpected error: %v", err)
+	}
+
+	spy.AssertCalled(t, "Heading")
 }
 
 // Test_FlagNames_Schematic_MatchSpec verifies the schematic subcommand has
@@ -84,7 +123,8 @@ func Test_FlagNames_Schematic_MatchSpec(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService()
-	root := NewCommand(svc)
+	spy := outputtest.New()
+	root := NewCommand(svc, spy)
 
 	// Find the schematic subcommand.
 	scCmd, _, err := root.Find([]string{"schematic"})
@@ -106,7 +146,8 @@ func Test_FlagNames_Collection_MatchSpec(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService()
-	root := NewCommand(svc)
+	spy := outputtest.New()
+	root := NewCommand(svc, spy)
 
 	colCmd, _, err := root.Find([]string{"collection"})
 	if err != nil || colCmd == nil || colCmd.Name() != "collection" {
@@ -130,6 +171,7 @@ func Test_HandleCollection_PublishableInline_RejectsAtHandler(t *testing.T) {
 	t.Parallel()
 
 	svc := newTestService()
+	spy := outputtest.New()
 	cmd := newCollectionCmd()
 	// Set both conflicting flags directly (simulates --publishable --inline on the CLI).
 	if err := cmd.Flags().Set("publishable", "true"); err != nil {
@@ -140,7 +182,7 @@ func Test_HandleCollection_PublishableInline_RejectsAtHandler(t *testing.T) {
 	}
 
 	// Call the handler: handler reads flags, calls CheckPublishableInlineConflict, returns error.
-	err := handleCollection(svc)(cmd, []string{"foo"}, false, false)
+	err := handleCollection(svc, spy)(cmd, []string{"foo"}, false, false)
 	if err == nil {
 		t.Fatal("expected ErrCodeModeConflict; got nil (handler must call CheckPublishableInlineConflict)")
 	}
