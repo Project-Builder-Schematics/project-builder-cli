@@ -31,7 +31,7 @@ func New(p Palette, prof Profile, app Appearance) Theme {
 		palette:    p,
 		profile:    prof,
 		appearance: app,
-		resolver:   Resolver{},
+		resolver:   newResolver(p, prof, app),
 	}
 }
 
